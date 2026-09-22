@@ -16,6 +16,8 @@
 !.codex/templates/**
 .claude/
 
+portfolio.pdf
+
 # Generated working notes / local review artifacts
 plan/*
 
