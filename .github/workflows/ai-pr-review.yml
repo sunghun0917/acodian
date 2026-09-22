@@ -1,0 +1,49 @@
+name: AI PR Review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # pull_request_target uses the trusted base workflow and reviewer code.
+      - name: Check out trusted reviewer code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: reviewer
+          persist-credentials: false
+
+      # The PR checkout is data only: no dependency install, script, or test runs from it.
+      - name: Check out pull request for read-only analysis
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install trusted reviewer dependencies
+        working-directory: reviewer/ai
+        run: pip install --requirement requirements.txt
+
+      - name: Review pull request and update bot comment
+        working-directory: reviewer/ai
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PR_REVIEW_MODEL: gpt-5.6-terra
+        run: python -m app.pr_review.cli --event-path "$GITHUB_EVENT_PATH" --pr-root "$GITHUB_WORKSPACE/pr"
