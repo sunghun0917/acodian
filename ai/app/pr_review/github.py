@@ -6,6 +6,7 @@ import httpx
 
 
 MARKER = "<!-- ax-wms-pr-review-bot -->"
+BOT_LOGIN = "github-actions[bot]"
 
 
 class GitHubPullRequestClient:
@@ -29,7 +30,12 @@ class GitHubPullRequestClient:
             response = client.get(comments_url, headers=headers, params={"per_page": 100})
             response.raise_for_status()
             existing = next(
-                (comment for comment in response.json() if MARKER in comment.get("body", "")),
+                (
+                    comment
+                    for comment in response.json()
+                    if MARKER in comment.get("body", "")
+                    and comment.get("user", {}).get("login") == BOT_LOGIN
+                ),
                 None,
             )
             if existing:
