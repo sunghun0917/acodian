@@ -6,7 +6,8 @@ import subprocess
 from pathlib import Path
 
 
-MAX_OUTPUT_CHARS = 12_000
+MAX_OUTPUT_CHARS = 3_000
+CONTEXT_LINES = 40
 
 
 class RepositoryTools:
@@ -15,15 +16,25 @@ class RepositoryTools:
     def __init__(self, repository_root: Path) -> None:
         self._root = repository_root.resolve()
 
-    def read_file(self, path: str) -> str:
-        """저장소 내부 텍스트 파일의 앞부분을 반환한다."""
+    def read_match_context(self, path: str, query: str) -> str:
+        """첫 검색 일치 지점의 앞뒤 문맥만 반환한다."""
         target = self._resolve(path)
         if not target.is_file():
             return f"File not found: {path}"
-        try:
-            return self._truncate(target.read_text(encoding="utf-8", errors="replace"))
-        except OSError as exc:
-            return f"Unable to read {path}: {exc.__class__.__name__}"
+        query = query.strip()
+        if not query or len(query) > 200:
+            return "Search query must contain 1 to 200 characters."
+        return self._run(
+            "rg",
+            "--line-number",
+            "--context",
+            str(CONTEXT_LINES),
+            "--max-count",
+            "1",
+            "--",
+            query,
+            path,
+        )
 
     def search_code(self, query: str) -> str:
         """고정된 rg 인자로 저장소에서 문자열을 검색한다."""
@@ -51,8 +62,8 @@ class RepositoryTools:
 
     def execute(self, name: str, arguments: dict[str, object]) -> str:
         """허용 목록의 도구만 인자로 실행한다."""
-        if name == "read_file":
-            return self.read_file(str(arguments.get("path", "")))
+        if name == "read_match_context":
+            return self.read_match_context(str(arguments.get("path", "")), str(arguments.get("query", "")))
         if name == "search_code":
             return self.search_code(str(arguments.get("query", "")))
         if name == "get_git_history":

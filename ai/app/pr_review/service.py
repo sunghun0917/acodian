@@ -57,13 +57,13 @@ class PullRequestReviewService:
         return [
             {
                 "type": "function",
-                "name": "read_file",
-                "description": "Read a UTF-8 text file inside the pull request checkout.",
+                "name": "read_match_context",
+                "description": "Read up to 40 lines before and after the first query match in a pull request file.",
                 "strict": True,
                 "parameters": {
                     "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}, "query": {"type": "string"}},
+                    "required": ["path", "query"],
                     "additionalProperties": False,
                 },
             },

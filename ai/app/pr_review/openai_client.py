@@ -85,10 +85,24 @@ class OpenAIResponsesClient:
                 "schema": schema,
             },
         )
-        output_text = response.get("output_text")
-        if not isinstance(output_text, str) or not output_text.strip():
+        output_text = self._extract_output_text(response)
+        if not output_text:
             raise ValueError("OpenAI returned no structured review output")
         return output_text
+
+    @staticmethod
+    def _extract_output_text(response: dict[str, Any]) -> str:
+        """Responses API 메시지 항목에서 생성 텍스트를 수집한다."""
+        texts: list[str] = []
+        for item in response.get("output", []):
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                if isinstance(content, dict) and content.get("type") == "output_text":
+                    text = content.get("text")
+                    if isinstance(text, str):
+                        texts.append(text)
+        return "".join(texts).strip()
 
     def _create(
         self,
