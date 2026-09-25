@@ -57,3 +57,9 @@ Thumbs.db
 
 # Generated jOOQ sources are disposable artifacts, not checked-in source
 /api/src/generated/jooq/main/
+.omx-state-locks/
+.omx-state-locks.identity.json
+.codex/skills/.system/**
+!.codex/prompts/
+!.codex/prompts/**
+omx_wiki/session-log-*.md
