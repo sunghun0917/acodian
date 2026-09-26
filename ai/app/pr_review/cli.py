@@ -48,7 +48,7 @@ def _render(result: ReviewResult, head_sha: str) -> str:
 
 
 def _run(args: argparse.Namespace) -> None:
-    """이벤트를 해석하고 리뷰를 생성해 PR 코멘트를 갱신한다."""
+    """이벤트를 해석하고 리뷰를 생성해 새 PR 코멘트를 게시한다."""
     event = _load_event(Path(args.event_path))
     pull_request = event.get("pull_request")
     if not isinstance(pull_request, dict):
@@ -80,7 +80,7 @@ def _run(args: argparse.Namespace) -> None:
         token=os.environ["GITHUB_TOKEN"],
         repository=os.environ["GITHUB_REPOSITORY"],
         pull_number=int(event["number"]),
-    ).upsert_review_comment(_render(result, head_sha))
+    ).create_review_comment(_render(result, head_sha))
 
 
 def main() -> None:
