@@ -41,7 +41,7 @@ jobs:
         working-directory: reviewer/ai
         run: pip install --requirement requirements.txt
 
-      - name: Review pull request and update bot comment
+      - name: Review pull request and create bot comment
         working-directory: reviewer/ai
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
