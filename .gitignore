@@ -63,3 +63,5 @@ Thumbs.db
 !.codex/prompts/
 !.codex/prompts/**
 omx_wiki/session-log-*.md
+/omx_wiki/index.md
+/omx_wiki/log.md
