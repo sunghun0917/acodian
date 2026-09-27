@@ -1,0 +1,33 @@
+{
+  "local": {
+    "indexed_documents": 200,
+    "exact_text_match": true,
+    "full_docs_sha256": "5eaeb7958d9964bfd6389ea2df5f6f7913d13ce635713a966b308dc6ad4d4127",
+    "doc_status_sha256": "dcbf2eef6f41685ea88f5df7e0979ab9db1952b63a0e810578525b8f64a948b0"
+  },
+  "graph": {
+    "worklogs": 200,
+    "confirmed_relation_counts": {
+      "DEPENDS_ON": 77,
+      "AUTHORED_BY": 200,
+      "BELONGS_TO": 200
+    },
+    "semantic_direction_exact": true
+  },
+  "vectors": {
+    "lightrag_vdb_relationships_gemini_embedding_001_768d": {
+      "points": 1014,
+      "payload_sha256": "cd98010fa5b21e3cb014388c6a7ab79cfd64eb16f224dadc18628f80d2642920"
+    },
+    "lightrag_vdb_chunks_gemini_embedding_001_768d": {
+      "points": 400,
+      "payload_sha256": "13765ca1784ede7f7dabda74cef7ce1f7f07351576d879234c1e06d92acde0c3"
+    },
+    "lightrag_vdb_entities_gemini_embedding_001_768d": {
+      "points": 592,
+      "payload_sha256": "c0fe661482ba012ec9557e8797566572f728ed455af01bea07cbe323d3a75aac"
+    }
+  },
+  "status": "PASS",
+  "limits": "Payloads and confirmed semantic relations checked; numerical embeddings not independently checked."
+}

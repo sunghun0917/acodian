@@ -1,0 +1,67 @@
+{
+  "started_at": "2026-09-27T16:44:58.640287+00:00",
+  "contract": {
+    "model": "gemini-3.5-flash-lite",
+    "judge_model": "gemini-3.8-flash",
+    "embedding_model": "gemini-embedding-001",
+    "versions": {
+      "ragas": "0.4.3",
+      "lightrag-hku": "1.4.10",
+      "google-genai": "1.73.1",
+      "instructor": "1.3.2"
+    },
+    "hashes": {
+      "docs\\ai\\evaluation\\v2\\run_evaluation.py": "30e2fde2fd4925871dec3f8fe706d908b4a083de856a4879643ae499a24ff7f5",
+      "docs\\ai\\evaluation\\run_ragas.py": "d2daae077eb4621cb54a4bf4fdf9fcd1d1110233888353e7bf58b9d045d196ca",
+      "docs\\ai\\evaluation\\v2\\benchmark-v2.jsonl": "5a2381029034b1616745b429f05458a2d8eacee1b72baa9e1ff5232024d58a6f",
+      "docs\\ai\\evaluation\\v2\\validation-details.jsonl": "26656a3e8f25c14896012e1c6142867b97a293dfea73a1cafbe5b4f3626c3dd9",
+      "docs\\ai\\evaluation\\v2\\manifest.json": "9a63bdf8c70bb269d07b367e2d04f31536245a59372942e7108e180dad84ab10",
+      "docs\\ai\\evaluation\\evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+      "docs\\ai\\evaluation\\generate_corpus.py": "9536828b2c84e8da45fa04a62a21364b1c58584efb3e6d5c6334219d5c1ce6a6",
+      "ai\\app\\light\\v3\\service\\lightrag_adapter.py": "8fc8fd26b4facded8c41ae1994f27a91a1efc8d47b582725eba9372640613957",
+      "docs\\ai\\evaluation\\v2\\results-judge-gemini-3.8-flash-20260928\\index-preflight.json": "be78adabb68500d3ed3e7705ebec8fdb031a0bd76ec1679ce89d2d7d2bbe3c17"
+    },
+    "preflight": {
+      "indexed_documents": 200,
+      "exact_text_match": true,
+      "full_docs_sha256": "5eaeb7958d9964bfd6389ea2df5f6f7913d13ce635713a966b308dc6ad4d4127",
+      "doc_status_sha256": "dcbf2eef6f41685ea88f5df7e0979ab9db1952b63a0e810578525b8f64a948b0"
+    },
+    "params": {
+      "top_k": 10,
+      "chunk_top_k": 5,
+      "max_entity_tokens": 3000,
+      "max_relation_tokens": 3000,
+      "max_total_tokens": 12000,
+      "enable_rerank": false,
+      "stream": false,
+      "include_references": true,
+      "only_need_prompt": true,
+      "response_type": "Short Korean answer"
+    },
+    "features": {
+      "postgres_relation_repair": false,
+      "anchor_replacement": false,
+      "extra_neo4j_expansion": false,
+      "rerank": false,
+      "builtin_mix_graph": true
+    },
+    "prompt_sha256": "d544e4e7b07cb0ae2849ea6938ef57a5843bf9559f54282eea0a67ce0d8b6d13",
+    "configuration_sha256": "d5c91f57a0aca4fb7aa8b1332bae0f0087e2c872823ee39e4854d71970c6d87c",
+    "temperature": 0,
+    "metrics": [
+      "faithfulness",
+      "answer_relevancy",
+      "context_precision_chunks",
+      "context_recall",
+      "factual_correctness"
+    ],
+    "factual": {
+      "mode": "f1",
+      "atomicity": "high",
+      "coverage": "high"
+    },
+    "response_cache": false,
+    "keyword_cache": true
+  }
+}
