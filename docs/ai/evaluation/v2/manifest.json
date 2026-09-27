@@ -1,0 +1,82 @@
+{
+  "schema_version": "2.2",
+  "sources": {
+    "../evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+    "../benchmark-v1.jsonl": "b21d7d5faeb67e377424c632ee9d0388dd9eeddf17b02a840aa602f0c18bcc7b"
+  },
+  "counts": {
+    "worklogs": 200,
+    "dependencies": 77,
+    "questions": 80
+  },
+  "categories": {
+    "simple_fact": 20,
+    "direct_relation": 20,
+    "multi_relation": 20,
+    "dependency_closure": 12,
+    "relation_absence": 8
+  },
+  "split_counts": {
+    "development": 45,
+    "evaluation": 35
+  },
+  "split_by_category": {
+    "development": {
+      "simple_fact": 10,
+      "direct_relation": 14,
+      "multi_relation": 11,
+      "dependency_closure": 6,
+      "relation_absence": 4
+    },
+    "evaluation": {
+      "simple_fact": 10,
+      "direct_relation": 6,
+      "multi_relation": 9,
+      "dependency_closure": 6,
+      "relation_absence": 4
+    }
+  },
+  "topology": {
+    "max_dependency_depth": 4,
+    "depth_distribution": {
+      "0": 123,
+      "1": 54,
+      "2": 16,
+      "3": 5,
+      "4": 2
+    },
+    "branching_nodes": 0,
+    "cycles": 0,
+    "weak_components": 123
+  },
+  "limitations": [
+    "Same V1 synthetic corpus; not a fresh unseen-corpus holdout.",
+    "15 simple-fact questions reused verbatim from V1.",
+    "Evaluation split grouped by complete weak dependency component; author/team entities may overlap.",
+    "All absence and closure gold is relative to the fixed 200-node induced subgraph, not the full source database.",
+    "No real branching dependencies in this source; branch behavior only covered by synthetic algorithm tests.",
+    "No runtime ACL evaluation; no independent human adjudication yet.",
+    "V2 requires a dedicated runner adapter; do not pass directly to the V1 runner."
+  ],
+  "index_policy": "Reuse existing V1 indexes; no new corpus or indexing artifacts",
+  "never_index": [
+    "benchmark-v2.jsonl",
+    "validation-details.jsonl",
+    "manifest.json"
+  ],
+  "comparison_arms": [
+    "Naive existing V1 body index",
+    "LightRAG Mix existing V1 body and graph indexes"
+  ],
+  "comparison_claim": "System-level comparison; graph metadata availability differs, not equal-information algorithm isolation",
+  "metrics": {
+    "all": "RAGAS faithfulness/relevance plus subtype macro averages, latency and tokens",
+    "relations": "entity-ID exact match, directed edge precision/recall/F1",
+    "closure": "exact-set accuracy plus worklog-ID precision/recall/F1",
+    "absence": "false-positive relation rate; verified absence is not unsupported-topic refusal"
+  },
+  "artifacts": {
+    "benchmark-v2.jsonl": "5a2381029034b1616745b429f05458a2d8eacee1b72baa9e1ff5232024d58a6f",
+    "validation-details.jsonl": "26656a3e8f25c14896012e1c6142867b97a293dfea73a1cafbe5b4f3626c3dd9"
+  }
+}
