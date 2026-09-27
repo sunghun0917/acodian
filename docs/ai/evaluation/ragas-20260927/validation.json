@@ -1,0 +1,12 @@
+{
+  "responses": 100,
+  "unique_pairs": 100,
+  "finite_scores": 360,
+  "abstention_judgments": 10,
+  "row_errors": 0,
+  "regression_tests_passed": 20,
+  "original_runner_sha256": "af0c042327ee98b3a98cfb64f28bbd420d4c0fde63ddaa0422789474f65017d8",
+  "full_run_powershell_exit": 1,
+  "full_run_python_traceback": false,
+  "report_only_exit": 0
+}

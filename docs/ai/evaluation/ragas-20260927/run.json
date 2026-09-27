@@ -1,0 +1,33 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "embedding_model": "gemini-embedding-001",
+  "versions": {
+    "ragas": "0.4.3",
+    "lightrag-hku": "1.4.10",
+    "google-genai": "1.73.1",
+    "instructor": "1.3.2"
+  },
+  "benchmark_sha256": "b21d7d5faeb67e377424c632ee9d0388dd9eeddf17b02a840aa602f0c18bcc7b",
+  "corpus_sha256": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+  "script_sha256": "af0c042327ee98b3a98cfb64f28bbd420d4c0fde63ddaa0422789474f65017d8",
+  "prompt_sha256": "d544e4e7b07cb0ae2849ea6938ef57a5843bf9559f54282eea0a67ce0d8b6d13",
+  "params": {
+    "top_k": 10,
+    "chunk_top_k": 5,
+    "max_entity_tokens": 3000,
+    "max_relation_tokens": 3000,
+    "max_total_tokens": 12000,
+    "enable_rerank": false,
+    "stream": false,
+    "include_references": true,
+    "only_need_prompt": true,
+    "response_type": "Short Korean answer"
+  },
+  "preflight": {
+    "indexed_documents": 200,
+    "exact_text_match": true,
+    "full_docs_sha256": "5eaeb7958d9964bfd6389ea2df5f6f7913d13ce635713a966b308dc6ad4d4127",
+    "doc_status_sha256": "dcbf2eef6f41685ea88f5df7e0979ab9db1952b63a0e810578525b8f64a948b0"
+  },
+  "started_at": "2026-09-26T19:22:43.485586+00:00"
+}
