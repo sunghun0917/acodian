@@ -1,0 +1,13 @@
+{
+  "postgres_worklogs": 200,
+  "dependencies": 77,
+  "qdrant_counts": {
+    "chunks": 400,
+    "entities": 592,
+    "relationships": 1014
+  },
+  "neo4j_worklogs": 200,
+  "confirmed_graph_facts": 477,
+  "out_of_corpus_vector_ids": false,
+  "checks": "Read-only PostgreSQL exact corpus comparison; Qdrant all point provenance in corpus and chunk coverage; Neo4j Worklog set and confirmed relationship descriptions"
+}
