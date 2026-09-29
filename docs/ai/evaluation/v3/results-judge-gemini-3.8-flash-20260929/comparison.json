@@ -1,0 +1,216 @@
+{
+  "generated_at": "2026-09-28T17:43:41.981008+00:00",
+  "overall": {
+    "naive": {
+      "n": 50,
+      "scores": {
+        "faithfulness": 0.8833333333333333,
+        "answer_relevancy": 0.2836949234237724,
+        "context_precision_chunks": 0.36583333330121387,
+        "context_recall": 0.475,
+        "factual_correctness": 0.2924
+      },
+      "retrieval_seconds": 0.5887801700050477,
+      "total_seconds": 2.292505576002877
+    },
+    "mix": {
+      "n": 50,
+      "scores": {
+        "faithfulness": 0.9391666666666667,
+        "answer_relevancy": 0.7764116869555366,
+        "context_precision_chunks": 0.32277777774734073,
+        "context_recall": 0.625,
+        "factual_correctness": 0.08120000000000001
+      },
+      "retrieval_seconds": 2.752747225997737,
+      "total_seconds": 4.577782561995555
+    }
+  },
+  "by_category": {
+    "simple_fact": {
+      "naive": {
+        "n": 10,
+        "scores": {
+          "faithfulness": 0.9333333333333333,
+          "answer_relevancy": 0.8873013018812436,
+          "context_precision_chunks": 0.9499999999175,
+          "context_recall": 1.0,
+          "factual_correctness": 0.275
+        },
+        "retrieval_seconds": 0.6578345100046136,
+        "total_seconds": 2.3740695700165815
+      },
+      "mix": {
+        "n": 10,
+        "scores": {
+          "faithfulness": 0.9666666666666667,
+          "answer_relevancy": 0.8747802495404666,
+          "context_precision_chunks": 0.908888888803037,
+          "context_recall": 1.0,
+          "factual_correctness": 0.24000000000000002
+        },
+        "retrieval_seconds": 1.6969665499986148,
+        "total_seconds": 3.5644586599897594
+      }
+    },
+    "direct_relation": {
+      "naive": {
+        "n": 12,
+        "scores": {
+          "faithfulness": 0.9166666666666666,
+          "answer_relevancy": 0.15233119495045053,
+          "context_precision_chunks": 0.0722222222167361,
+          "context_recall": 0.16666666666666666,
+          "factual_correctness": 0.20083333333333334
+        },
+        "retrieval_seconds": 0.5180563916752968,
+        "total_seconds": 2.1029056083304263
+      },
+      "mix": {
+        "n": 12,
+        "scores": {
+          "faithfulness": 1.0,
+          "answer_relevancy": 0.9110256858854979,
+          "context_precision_chunks": 0.016666666665,
+          "context_recall": 0.4166666666666667,
+          "factual_correctness": 0.0
+        },
+        "retrieval_seconds": 2.82724517499931,
+        "total_seconds": 4.546398324988938
+      }
+    },
+    "multi_relation": {
+      "naive": {
+        "n": 14,
+        "scores": {
+          "faithfulness": 0.7738095238095238,
+          "answer_relevancy": 0.12666009114043955,
+          "context_precision_chunks": 0.12380952379714286,
+          "context_recall": 0.2857142857142857,
+          "factual_correctness": 0.41285714285714287
+        },
+        "retrieval_seconds": 0.6858054500106456,
+        "total_seconds": 2.5129393000014324
+      },
+      "mix": {
+        "n": 14,
+        "scores": {
+          "faithfulness": 0.8916666666666666,
+          "answer_relevancy": 0.8182214100341266,
+          "context_precision_chunks": 0.08214285713464285,
+          "context_recall": 0.4642857142857143,
+          "factual_correctness": 0.0
+        },
+        "retrieval_seconds": 3.1876904142845888,
+        "total_seconds": 4.950727235712942
+      }
+    },
+    "dependency_closure": {
+      "naive": {
+        "n": 8,
+        "scores": {
+          "faithfulness": 0.875,
+          "answer_relevancy": 0.21381469212557797,
+          "context_precision_chunks": 0.09687499999234375,
+          "context_recall": 0.34375,
+          "factual_correctness": 0.19
+        },
+        "retrieval_seconds": 0.48681895000481745,
+        "total_seconds": 2.0688924250061973
+      },
+      "mix": {
+        "n": 8,
+        "scores": {
+          "faithfulness": 0.8927083333333333,
+          "answer_relevancy": 0.6389544663414479,
+          "context_precision_chunks": 0.06666666666,
+          "context_recall": 0.46875,
+          "factual_correctness": 0.057499999999999996
+        },
+        "retrieval_seconds": 3.0304644375064527,
+        "total_seconds": 5.031629587509087
+      }
+    },
+    "relation_absence": {
+      "naive": {
+        "n": 6,
+        "scores": {
+          "faithfulness": 1.0,
+          "answer_relevancy": 0.0,
+          "context_precision_chunks": 0.9027777776976852,
+          "context_recall": 0.8333333333333334,
+          "factual_correctness": 0.36
+        },
+        "retrieval_seconds": 0.5246931333191848,
+        "total_seconds": 2.319571033323882
+      },
+      "mix": {
+        "n": 6,
+        "scores": {
+          "faithfulness": 0.9444444444444444,
+          "answer_relevancy": 0.4289563584228053,
+          "context_precision_chunks": 0.8611111110319444,
+          "context_recall": 1.0,
+          "factual_correctness": 0.2
+        },
+        "retrieval_seconds": 2.9782287333121835,
+        "total_seconds": 4.8540905999931665
+      }
+    }
+  },
+  "by_split": {
+    "development": {
+      "naive": {
+        "n": 25,
+        "scores": {
+          "faithfulness": 0.8866666666666667,
+          "answer_relevancy": 0.2465172675258254,
+          "context_precision_chunks": 0.3876666666343833,
+          "context_recall": 0.4766666666666667,
+          "factual_correctness": 0.3236
+        },
+        "retrieval_seconds": 0.6650551960058511,
+        "total_seconds": 2.3474442520015875
+      },
+      "mix": {
+        "n": 25,
+        "scores": {
+          "faithfulness": 0.91,
+          "answer_relevancy": 0.6999447184336716,
+          "context_precision_chunks": 0.3408888888568148,
+          "context_recall": 0.6233333333333333,
+          "factual_correctness": 0.13040000000000002
+        },
+        "retrieval_seconds": 2.777563711989205,
+        "total_seconds": 4.623344047991559
+      }
+    },
+    "evaluation": {
+      "naive": {
+        "n": 25,
+        "scores": {
+          "faithfulness": 0.88,
+          "answer_relevancy": 0.32087257932171936,
+          "context_precision_chunks": 0.3439999999680444,
+          "context_recall": 0.47333333333333333,
+          "factual_correctness": 0.2612
+        },
+        "retrieval_seconds": 0.5125051440042444,
+        "total_seconds": 2.237566900004167
+      },
+      "mix": {
+        "n": 25,
+        "scores": {
+          "faithfulness": 0.9683333333333334,
+          "answer_relevancy": 0.8528786554774016,
+          "context_precision_chunks": 0.3046666666378667,
+          "context_recall": 0.6266666666666667,
+          "factual_correctness": 0.032
+        },
+        "retrieval_seconds": 2.727930740006268,
+        "total_seconds": 4.5322210759995505
+      }
+    }
+  },
+  "factual_caveat": "Reference-only NLI penalizes question context absent from abbreviated references. Audited two examples; not a claim that all low scores are artifacts. No original score was changed."
+}
