@@ -1,0 +1,10 @@
+{
+  "expected_rows": 100,
+  "generated_rows": 100,
+  "complete_rows": 100,
+  "expected_scores": 300,
+  "valid_scores": 300,
+  "generation_errors": 0,
+  "score_errors": 0,
+  "status": "complete"
+}

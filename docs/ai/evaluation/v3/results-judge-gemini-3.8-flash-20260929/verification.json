@@ -1,0 +1,14 @@
+{
+  "checked_at": "2026-09-28T17:41:30.062573+00:00",
+  "status": "PASS",
+  "rows": 100,
+  "finite_scores": 500,
+  "exact_pairs": true,
+  "question_reference_match": true,
+  "contexts_match_generation_prompt": true,
+  "contract_hashes_match": true,
+  "local_index_unchanged": true,
+  "graph_snapshot_unchanged": true,
+  "vector_payloads_unchanged": true,
+  "limits": "Numerical embeddings not independently checked; keyword cache writes are allowed."
+}

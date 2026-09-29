@@ -1,0 +1,31 @@
+{
+  "schema_version": "3.0",
+  "questions": 50,
+  "categories": {
+    "simple_fact": 10,
+    "direct_relation": 12,
+    "multi_relation": 14,
+    "dependency_closure": 8,
+    "relation_absence": 6
+  },
+  "split_counts": {
+    "development": 25,
+    "evaluation": 25
+  },
+  "anchor_styles": {
+    "title_or_existing_fact": 30,
+    "title_paraphrase": 14,
+    "content_paraphrase": 6
+  },
+  "source_v2_sha256": {
+    "benchmark-v2.jsonl": "5a2381029034b1616745b429f05458a2d8eacee1b72baa9e1ff5232024d58a6f",
+    "validation-details.jsonl": "e5705ee5fa5a38bf87263421ade9c5a47ff134657da281b5b24aa11502c8121a"
+  },
+  "source_corpus_sha256": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+  "artifact_sha256": {
+    "benchmark-v3.jsonl": "129ed0bec00e466f5325dd3cbd4ce12fa2e66e49fefd4b44d4765aeb40a47bd4",
+    "validation-details.jsonl": "9ecfd27e8ad9722ac4c6284a3279431884e47f7667074f131e812c2059138eb8"
+  },
+  "evaluation_scope": "fixed_200_worklog_induced_subgraph",
+  "index_policy": "Reuse V2 indexes; never index benchmark or gold artifacts"
+}

@@ -1,0 +1,35 @@
+{
+  "checked_at": "2026-09-28T16:40:28.987043+00:00",
+  "local": {
+    "indexed_documents": 200,
+    "exact_text_match": true,
+    "full_docs_sha256": "5eaeb7958d9964bfd6389ea2df5f6f7913d13ce635713a966b308dc6ad4d4127",
+    "doc_status_sha256": "dcbf2eef6f41685ea88f5df7e0979ab9db1952b63a0e810578525b8f64a948b0"
+  },
+  "graph": {
+    "worklogs": 200,
+    "confirmed_relation_counts": {
+      "AUTHORED_BY": 200,
+      "BELONGS_TO": 200,
+      "DEPENDS_ON": 77
+    },
+    "semantic_direction_exact": true,
+    "snapshot_sha256": "82f35bb4c5c3d62fdac433f0ed6e8ceca9e4290952deaf0355534a47d0740d8a"
+  },
+  "vectors": {
+    "lightrag_vdb_relationships_gemini_embedding_001_768d": {
+      "points": 1014,
+      "payload_sha256": "dd0541dc9f3bf641cf4f0738d1839d1dbb401706e32ffe6a04d50376cf7e7446"
+    },
+    "lightrag_vdb_chunks_gemini_embedding_001_768d": {
+      "points": 400,
+      "payload_sha256": "d614a6a5922f0568ec296d85f0880ff85916aadc0bdaa92d93df39a40b11fd52"
+    },
+    "lightrag_vdb_entities_gemini_embedding_001_768d": {
+      "points": 592,
+      "payload_sha256": "8e5bf21df0f1ce3fb76c11b542c2dd92eb5b50b9077166a69615bd39d90b0d87"
+    }
+  },
+  "status": "PASS",
+  "limits": "Confirmed semantic relations and payload snapshots checked; numeric embeddings not independently checked."
+}
