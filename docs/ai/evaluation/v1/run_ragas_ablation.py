@@ -19,7 +19,7 @@ import sys
 import time
 
 from run_ragas import PROMPT, context_units, read, safe_error, save, sha, verify_local
-ROOT=Path(__file__).resolve().parents[3]
+ROOT=Path(__file__).resolve().parents[4]
 HERE=Path(__file__).resolve().parent
 BASE=HERE/'ragas-20260927'
 DEFAULT_OUTPUT=HERE/'ragas-context-repair-20260927'
@@ -208,7 +208,7 @@ def create_report(output: Path) -> None:
         '- rows/*.json: 원답변/개선답변·실제문맥·점수·판정 trace·repair stats.',
         '- baseline-integrity.json 및 integrity-after.json: 동결 원본 전후 검증.',
         '- contract.json: 동일 조건 및 재개 계약.',
-        '- 재보고: `ai/.venv/Scripts/python.exe -B docs/ai/evaluation/run_ragas_ablation.py --report-only`']
+        '- 재보고: `ai/.venv/Scripts/python.exe -B docs/ai/evaluation/v1/run_ragas_ablation.py --report-only`']
     (output/'report.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
 
@@ -341,7 +341,7 @@ async def main(args):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output',default='docs/ai/evaluation/ragas-context-repair-20260927')
+    parser.add_argument('--output',default='docs/ai/evaluation/v1/ragas-context-repair-20260927')
     parser.add_argument('--smoke',action='store_true')
     parser.add_argument('--report-only',action='store_true')
     parser.add_argument('--variant',choices=['baseline_rescore','anchor_only','anchor_relation'])

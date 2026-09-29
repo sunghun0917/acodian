@@ -1,6 +1,6 @@
 {
   "docs\\ai\\evaluation\\benchmark-v1.jsonl": "b21d7d5faeb67e377424c632ee9d0388dd9eeddf17b02a840aa602f0c18bcc7b",
-  "docs\\ai\\evaluation\\evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+  "docs\\ai\\evaluation\\v1\\evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
   "docs\\ai\\evaluation\\ragas-20260927\\index-verification.json": "734b2f166125b044b195fcf32dc8f0de662940d2e44af6022e2ae0d0e330275b",
   "docs\\ai\\evaluation\\ragas-20260927\\report.md": "4b2e258daccabeef7dce6c5f9c1870223a7f717db6936359798d493a61621c0d",
   "docs\\ai\\evaluation\\ragas-20260927\\rows\\disambiguation-001--mix.json": "24e08f9dbc245992cacd15923e3d0e71a48e711122f5e793163319629c82d951",

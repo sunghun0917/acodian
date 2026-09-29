@@ -7,11 +7,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parent / 'v1'))
 from generate_corpus import read_rows, digest
 
-SOURCE = HERE.parent / "evaluation-corpus-v1.sql"
-V1 = HERE.parent / "benchmark-v1.jsonl"
+SOURCE = HERE.parent / "v1" / "evaluation-corpus-v1.sql"
+V1 = HERE.parent / "v1" / "benchmark-v1.jsonl"
 
 # Manually authored short questions and verbatim answer spans from existing text.
 FACTS = [
@@ -115,7 +115,7 @@ def build():
           "answerable": True, "answer_kind": "verified_absence" if negative else "positive",
           "hop_count": hops, "dependency_paths": paths, "structured_gold": gold,
           "expected_worklog_ids": evidence_ids, "evidence": evidence, "relation_evidence": relations,
-          "provenance": {"source": "../evaluation-corpus-v1.sql", "reused_v1_question_id": reused,
+          "provenance": {"source": "../v1/evaluation-corpus-v1.sql", "reused_v1_question_id": reused,
                          "v1_exposed_worklog_ids": sorted(set(evidence_ids)&old_ids)},
           "evaluation_scope": "fixed_200_worklog_induced_subgraph",
           "absence_check": {"kind": "zero_out_degree", "root_worklog_id": root} if negative else None})
@@ -171,7 +171,7 @@ def build():
         question=f"{label(root)} 업무에 등록된 직접 선행업무가 있나요? 현재 200건의 평가 코퍼스에 등록된 관계만 기준으로 답하세요."
         add("relation_absence","no_registered_dependency",root,[],[],[],question,"현재 200건의 평가 코퍼스에 등록된 직접 선행업무가 없습니다.",1,negative=True)
     depths=Counter(max([0]+[len(p)-1 for p in paths_from(i,adjacency)]) for i in w)
-    manifest={"schema_version":"2.2","sources":{"../evaluation-corpus-v1.sql":digest(SOURCE),"../benchmark-v1.jsonl":digest(V1)},
+    manifest={"schema_version":"2.2","sources":{"../v1/evaluation-corpus-v1.sql":digest(SOURCE),"../v1/benchmark-v1.jsonl":digest(V1)},
       "counts":{"worklogs":len(w),"dependencies":len(edges),"questions":len(cases)},
       "categories":dict(Counter(c["category"] for c in cases)),"split_counts":dict(Counter(c["split"] for c in cases)),
       "split_by_category":{s:dict(Counter(c["category"] for c in cases if c["split"]==s)) for s in ("development","evaluation")},

@@ -68,7 +68,7 @@
 - benchmark SHA-256: `b21d7d5faeb67e377424c632ee9d0388dd9eeddf17b02a840aa602f0c18bcc7b`
 - corpus SQL SHA-256: `eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80`
 - `run.json`: 모델·환경·해시·인덱스 확인 기록. `rows/*.json`: 응답, 실제 문맥, 검색 결과, 점수, 오류, 지연.
-- 실행: `ai/.venv/Scripts/python.exe -B docs/ai/evaluation/run_ragas.py --output docs/ai/evaluation/ragas-new-run --limit 50`
+- 실행: `ai/.venv/Scripts/python.exe -B docs/ai/evaluation/v1/run_ragas.py --output docs/ai/evaluation/ragas-new-run --limit 50`
 
 ## 대표 실패 및 채점 해석 사례
 

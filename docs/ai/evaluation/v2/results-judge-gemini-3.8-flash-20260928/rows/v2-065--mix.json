@@ -57,7 +57,7 @@
   "information_scope": "registered_relations",
   "provenance": {
     "reused_v1_question_id": null,
-    "source": "../evaluation-corpus-v1.sql",
+    "source": "../v1/evaluation-corpus-v1.sql",
     "v1_exposed_worklog_ids": [
       78,
       413,
