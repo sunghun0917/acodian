@@ -20,12 +20,12 @@ planner의 `.omx/plans/ragas-naive-mix-data-benchmark-v1.md`를 바탕으로 사
 
 | 파일 | 용도 |
 |---|---|
-| `evaluation-corpus-v1.sql` | 합성 원문과 최소 참조 테이블 및 FK |
-| `corpus-manifest-v1.json` | 원본 3개 파일 SHA-256, 선택 ID, 분포, SQL/질문 해시 |
-| `benchmark-v1.jsonl` | 한국어 질문·기준 답변·본문 및 관계 근거 50문항 |
-| `generate_corpus.py` | 표준 라이브러리 기반 결정적 SQL/manifest 재생성 |
-| `validate_benchmark.py` | 해시/값 보존/추출/관계/근거/부재 검사 |
-| `test_validate_benchmark.py` | 잘못된 ID, quote, 중복, 관계 방향/범위, 해시 변경, 부재 실패 회귀검사 |
+| `v1/evaluation-corpus-v1.sql` | 합성 원문과 최소 참조 테이블 및 FK |
+| `v1/corpus-manifest-v1.json` | 원본 3개 파일 SHA-256, 선택 ID, 분포, SQL/질문 해시 |
+| `v1/benchmark-v1.jsonl` | 한국어 질문·기준 답변·본문 및 관계 근거 50문항 |
+| `v1/generate_corpus.py` | 표준 라이브러리 기반 결정적 SQL/manifest 재생성 |
+| `v1/validate_benchmark.py` | 해시/값 보존/추출/관계/근거/부재 검사 |
+| `v1/test_validate_benchmark.py` | 잘못된 ID, quote, 중복, 관계 방향/범위, 해시 변경, 부재 실패 회귀검사 |
 
 ## SQL 적용 계약과 보안
 
@@ -50,8 +50,8 @@ planner의 `.omx/plans/ragas-naive-mix-data-benchmark-v1.md`를 바탕으로 사
 저장소 루트에서 Python 3.11+로 실행합니다. 외부 라이브러리·네트워크·DB가 필요 없습니다.
 
 ```powershell
-python -B docs/ai/evaluation/validate_benchmark.py
-python -B -m unittest discover -s docs/ai/evaluation -p test_validate_benchmark.py -v
+python -B docs/ai/evaluation/v1/validate_benchmark.py
+python -B -m unittest discover -s docs/ai/evaluation/v1 -p test_validate_benchmark.py -v
 ```
 
 현재 검증: 200건/10팀/77관계/50문항 정적 검사 PASS, 회귀검사 15개 PASS. 검증기는 원문 의미 함의나 실제 SQL 엔진 동작을 판정하지 않습니다. 본문/관계의 의미 검토와 실제 DB 적용 테스트는 별도 단계입니다.
@@ -59,8 +59,8 @@ python -B -m unittest discover -s docs/ai/evaluation -p test_validate_benchmark.
 재생성이 필요할 때만 다음 명령을 사용합니다. **원본이 바뀌어 검증이 실패한 경우 변경 이유를 먼저 검토하세요.** 재생성은 해시 기준선을 새로 기록하므로 검증 실패를 숨기기 위한 용도로 쓰지 않습니다. benchmark 파일 자체는 재생성하지 않습니다.
 
 ```powershell
-python -B docs/ai/evaluation/generate_corpus.py
-python -B docs/ai/evaluation/validate_benchmark.py
+python -B docs/ai/evaluation/v1/generate_corpus.py
+python -B docs/ai/evaluation/v1/validate_benchmark.py
 ```
 
 ## 후속 실행 인계
@@ -86,22 +86,22 @@ python -B docs/ai/evaluation/validate_benchmark.py
 계획: `.omx/plans/rag-query-context-improvement.md`.
 
 - 실행기: `run_ragas_ablation.py`, 공유 구현: `ai/app/light/v3/service/worklog_context_repair.py`.
-- 기존 `ragas-20260927/` 결과와 benchmark/corpus를 변경하지 않고 검색 문맥을 고정 재생한다.
+- 기존 `v1/ragas-20260927/` 결과와 benchmark/corpus를 변경하지 않고 검색 문맥을 고정 재생한다.
 - `baseline_rescore`: 기존 응답을 공통 judge로 재채점한다. 기존 점수와 새 점수를 구분한다.
 - `anchor_only`: 관계 출처 anchor를 같은 업무 원문으로 치환하고 중복 제거한다. 후보 밖 문서로 빈 슬롯을 채우지 않는다. 변경이 없으면 원문과 기존 답변을 재사용한다.
 - `anchor_relation`: mix에만 사전 SELECT로 고정한 DB 스냅샷의 작성자·팀 이름 및 직접 선행업무 정보를 보완한다. `mix+DB relation repair`이며 순수 mix 알고리즘 효과로 해석하지 않는다.
 - 생성 문맥과 채점 문맥은 동일하다. gold는 생성 후 평가에만 사용한다. RAGAS 판정 이유는 `judge_trace`에 보관한다.
 - 표준 4지표와 FactualCorrectness를 기록하고, gold quote AP/recall 및 방향 있는 관계 edge recall을 별도 보조 지표로 기록한다.
 - 운영 API 기본 동작은 변경하지 않는다. trusted evaluation scope는 사용자 인증/인가가 아니며, `allowedTeamIds` 격리 구현 전 운영 활성화를 보류한다.
-- 재인덱싱/DB 수정 없음. 결과는 `ragas-context-repair-20260927/`, 초기 smoke 결과는 `ragas-context-repair-smoke-20260927/`에 보존한다.
+- 재인덱싱/DB 수정 없음. 결과는 `v1/ragas-context-repair-20260927/`, 초기 smoke 결과는 `v1/ragas-context-repair-smoke-20260927/`에 보존한다.
 
 ```powershell
 # 사용자 승인된 ai/.env API 설정 사용. 실제 모델 호출과 비용이 발생한다.
-ai/.venv/Scripts/python.exe -X utf8 -B docs/ai/evaluation/run_ragas_ablation.py --smoke
-ai/.venv/Scripts/python.exe -X utf8 -B docs/ai/evaluation/run_ragas_ablation.py
+ai/.venv/Scripts/python.exe -X utf8 -B docs/ai/evaluation/v1/run_ragas_ablation.py --smoke
+ai/.venv/Scripts/python.exe -X utf8 -B docs/ai/evaluation/v1/run_ragas_ablation.py
 
 # 외부 호출 없이 원자료로 자동 통계 재생성
-ai/.venv/Scripts/python.exe -X utf8 -B docs/ai/evaluation/run_ragas_ablation.py --report-only
+ai/.venv/Scripts/python.exe -X utf8 -B docs/ai/evaluation/v1/run_ragas_ablation.py --report-only
 ```
 
 재개는 원본 파일·실행 코드·DB 스냅샷·모델 계약이 같을 때만 허용한다. 다른 출력 폴더에서 새 실행하려면 동결 baseline의 해시를 담은 `baseline-integrity.json`을 먼저 준비해야 한다. 최종 보고서에 추가한 수동 해석은 자동 재보고로 덮어쓸 수 있으므로 재보고 전에 별도 보존한다. 이 실험은 동일 개발 벤치마크에 대한 개선이며 독립 holdout 검증은 아니다.

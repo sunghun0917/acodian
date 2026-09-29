@@ -28,7 +28,7 @@
   "information_scope": "shared_text",
   "provenance": {
     "reused_v1_question_id": null,
-    "source": "../evaluation-corpus-v1.sql",
+    "source": "../v1/evaluation-corpus-v1.sql",
     "v1_exposed_worklog_ids": []
   },
   "relation_evidence": [],

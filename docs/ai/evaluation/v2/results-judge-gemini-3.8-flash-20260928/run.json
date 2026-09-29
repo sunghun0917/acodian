@@ -16,8 +16,8 @@
       "docs\\ai\\evaluation\\v2\\benchmark-v2.jsonl": "5a2381029034b1616745b429f05458a2d8eacee1b72baa9e1ff5232024d58a6f",
       "docs\\ai\\evaluation\\v2\\validation-details.jsonl": "26656a3e8f25c14896012e1c6142867b97a293dfea73a1cafbe5b4f3626c3dd9",
       "docs\\ai\\evaluation\\v2\\manifest.json": "9a63bdf8c70bb269d07b367e2d04f31536245a59372942e7108e180dad84ab10",
-      "docs\\ai\\evaluation\\evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
-      "docs\\ai\\evaluation\\generate_corpus.py": "9536828b2c84e8da45fa04a62a21364b1c58584efb3e6d5c6334219d5c1ce6a6",
+      "docs\\ai\\evaluation\\v1\\evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+      "docs\\ai\\evaluation\\v1\\generate_corpus.py": "9536828b2c84e8da45fa04a62a21364b1c58584efb3e6d5c6334219d5c1ce6a6",
       "ai\\app\\light\\v3\\service\\lightrag_adapter.py": "8fc8fd26b4facded8c41ae1994f27a91a1efc8d47b582725eba9372640613957",
       "docs\\ai\\evaluation\\v2\\results-judge-gemini-3.8-flash-20260928\\index-preflight.json": "be78adabb68500d3ed3e7705ebec8fdb031a0bd76ec1679ce89d2d7d2bbe3c17"
     },

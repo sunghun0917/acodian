@@ -1,8 +1,8 @@
 {
   "schema_version": "2.2",
   "sources": {
-    "../evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
-    "../benchmark-v1.jsonl": "b21d7d5faeb67e377424c632ee9d0388dd9eeddf17b02a840aa602f0c18bcc7b"
+    "../v1/evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+    "../v1/benchmark-v1.jsonl": "b21d7d5faeb67e377424c632ee9d0388dd9eeddf17b02a840aa602f0c18bcc7b"
   },
   "counts": {
     "worklogs": 200,
@@ -77,6 +77,6 @@
   },
   "artifacts": {
     "benchmark-v2.jsonl": "5a2381029034b1616745b429f05458a2d8eacee1b72baa9e1ff5232024d58a6f",
-    "validation-details.jsonl": "26656a3e8f25c14896012e1c6142867b97a293dfea73a1cafbe5b4f3626c3dd9"
+    "validation-details.jsonl": "e5705ee5fa5a38bf87263421ade9c5a47ff134657da281b5b24aa11502c8121a"
   }
 }

@@ -5,7 +5,7 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 HERE = Path(__file__).resolve().parent
 SEED = ROOT / "api/src/main/resources/db/dev-seed"
 SOURCES = [SEED / name for name in ("3_ibank-worklog-seed-v6.sql", "1_ibank-team-seed.sql", "6_ibank-worklog-dependency.sql")]

@@ -14,7 +14,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 AI = ROOT / 'ai'
 HERE = Path(__file__).resolve().parent
 PROMPT = '''주어진 근거만 사용하여 질문에 한국어로 간결하고 정확하게 답하세요.
@@ -240,7 +240,7 @@ def report(output, meta, cases):
         '', '## 재현 및 원자료','',
         f"- benchmark SHA-256: `{meta['benchmark_sha256']}`",f"- corpus SQL SHA-256: `{meta['corpus_sha256']}`",
         '- `run.json`: 모델·환경·해시·인덱스 확인 기록. `rows/*.json`: 응답, 실제 문맥, 검색 결과, 점수, 오류, 지연.',
-        '- 실행: `ai/.venv/Scripts/python.exe -B docs/ai/evaluation/run_ragas.py --output '+output.relative_to(ROOT).as_posix()+' --limit 50`',
+        '- 실행: `ai/.venv/Scripts/python.exe -B docs/ai/evaluation/v1/run_ragas.py --output '+output.relative_to(ROOT).as_posix()+' --limit 50`',
         '', '## 문항별 점수','', '| ID | 모드 | F | AR | CP | CR | 오류 |','|---|---|---:|---:|---:|---:|---|']
     for r in sorted(rows,key=lambda r:(r['id'],r['mode'])):
         cells=[r['id'],r['mode']]+[f"{r['scores'][k]:.4f}" if r.get('scores',{}).get(k) is not None else '—' for k in METRICS]
@@ -322,7 +322,7 @@ async def main(args):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
-    parser.add_argument('--output',default='docs/ai/evaluation/ragas-20260927')
+    parser.add_argument('--output',default='docs/ai/evaluation/v1/ragas-20260927')
     parser.add_argument('--limit',type=int,default=50)
     parser.add_argument('--report-only',action='store_true')
     asyncio.run(main(parser.parse_args()))

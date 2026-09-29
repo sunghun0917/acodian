@@ -14,7 +14,7 @@ import statistics
 import sys
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))
+sys.path.insert(0, str(HERE.parent / 'v1'))
 import run_ragas as base
 
 METRICS = [*base.METRICS, 'factual_correctness']
@@ -57,7 +57,7 @@ def contract(settings, output: Path | None = None) -> dict:
         raise ValueError('Generation and judge models must differ')
     paths = [Path(__file__), Path(base.__file__), HERE/'benchmark-v2.jsonl',
              HERE/'validation-details.jsonl', HERE/'manifest.json',
-             HERE.parent/'evaluation-corpus-v1.sql', HERE.parent/'generate_corpus.py',
+             HERE.parent/'v1'/'evaluation-corpus-v1.sql', HERE.parent/'v1'/'generate_corpus.py',
              base.AI/'app/light/v3/service/lightrag_adapter.py']
     if output is not None and (output/'index-preflight.json').exists():
         paths.append(output/'index-preflight.json')
