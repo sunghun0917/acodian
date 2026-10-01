@@ -11,4 +11,9 @@ ai/.venv/Scripts/python.exe -B -X utf8 -m unittest discover -s docs/ai/evaluatio
 ai/.venv/Scripts/python.exe -B -X utf8 docs/ai/evaluation/v4/regrade_v4.py
 ```
 
-결과: [재채점 보고서](results-judge-gemini-3.8-flash-20260929/report.md). API 호출이 중단되면 이미 채점한 행은 보존되며 같은 명령으로 이어서 채점한다.
+결과:
+- [V4 종합 최종 평가 보고서](final-report.md) (Baseline vs Reranker 비교 분석 종합)
+- [Baseline 재채점 보고서](results-ragas-gemini-3.8-flash-20260929/report.md)
+- [Reranker ON 평가 보고서](results-ragas-reranker-v4-mix-only-20260930/report.md)
+
+API 호출이 중단되면 이미 채점한 행은 보존되며 같은 명령으로 이어서 채점한다.
