@@ -1,6 +1,6 @@
 import asyncio
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -18,6 +18,7 @@ from app.light.v3.service.lightrag_adapter import (
     LightRagWorklogIndexAdapter,
     close_lightrag_worklog_index_adapter,
     get_lightrag_worklog_index_adapter,
+    _call_tei_rerank_api,
     _build_gemini_embedding_func,
     _build_gemini_llm_model_func,
 )
@@ -54,6 +55,8 @@ def make_query_options(
     top_k: int = 40,
     chunk_top_k: int = 20,
     response_type: str = "Multiple Paragraphs",
+    enable_rerank: bool = False,
+    rerank_model: str | None = None,
 ) -> LightRagQueryOptions:
     """LightRAG query adapter 테스트용 기본 options를 만든다."""
     return LightRagQueryOptions(
@@ -61,6 +64,8 @@ def make_query_options(
         top_k=top_k,
         chunk_top_k=chunk_top_k,
         response_type=response_type,
+        enable_rerank=enable_rerank,
+        rerank_model=rerank_model,
     )
 
 
@@ -122,6 +127,7 @@ class FakeQueryParam:
     top_k: int
     chunk_top_k: int
     response_type: str
+    enable_rerank: bool
 
 
 def make_dependencies(
@@ -692,8 +698,113 @@ def test_lightrag_adapter_query_uses_mix_non_streaming_with_references() -> None
         assert param.top_k == 7
         assert param.chunk_top_k == 3
         assert param.response_type == "Single Paragraph"
+        assert param.enable_rerank is False
 
     asyncio.run(run_case())
+
+
+def test_lightrag_adapter_configures_tei_reranker() -> None:
+    FakeLightRAG.instances = []
+    calls: list[dict[str, Any]] = []
+
+    async def fake_rerank_api(**kwargs: Any) -> list[dict[str, Any]]:
+        calls.append(kwargs)
+        return [{"index": 0, "relevance_score": 0.9}]
+
+    class RerankingQueryLightRAG(FakeQueryLightRAG):
+        async def aquery_llm(
+            self,
+            query: str,
+            *,
+            param: Any,
+            system_prompt: str | None = None,
+        ) -> dict[str, Any]:
+            await self.kwargs["rerank_model_func"](query, ["candidate"], top_n=1)
+            return await super().aquery_llm(
+                query, param=param, system_prompt=system_prompt
+            )
+
+    dependencies, _, _, _ = make_dependencies(RerankingQueryLightRAG)
+    dependencies = replace(dependencies, tei_rerank_api=fake_rerank_api)
+    settings = make_settings()
+    settings.lightrag_rerank_enabled = True
+    settings.lightrag_rerank_model = "BAAI/bge-reranker-v2-m3"
+    settings.lightrag_rerank_binding_host = "http://localhost:8080/rerank"
+    settings.lightrag_rerank_api_key = "local-key"
+    adapter = LightRagWorklogIndexAdapter(settings_obj=settings, dependencies=dependencies)
+
+    async def run_case() -> None:
+        await adapter.query_worklogs(
+            make_query_options(
+                enable_rerank=True, rerank_model="BAAI/bge-reranker-v2-m3"
+            )
+        )
+        fake_rag = FakeLightRAG.instances[0]
+        param = fake_rag.calls[-1][2]
+        assert param.enable_rerank is True
+
+        rerank = fake_rag.kwargs["rerank_model_func"]
+        results = await rerank("question", ["candidate"], top_n=1)
+
+        assert results == [{"index": 0, "relevance_score": 0.9}]
+
+    asyncio.run(run_case())
+
+    assert calls[1] == {
+        "query": "question",
+        "documents": ["candidate"],
+        "base_url": "http://localhost:8080/rerank",
+        "api_key": "local-key",
+        "top_n": 1,
+    }
+
+
+def test_tei_rerank_api_uses_native_payload_and_normalizes_results(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def json(self):
+            return [{"index": 1, "score": 0.8}, {"index": 0, "score": 0.4}]
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        def post(self, url, *, json, headers):
+            captured.update(url=url, json=json, headers=headers)
+            return Response()
+
+    monkeypatch.setattr("app.light.v3.service.lightrag_adapter.aiohttp.ClientSession", Session)
+
+    results = asyncio.run(
+        _call_tei_rerank_api(
+            query="question",
+            documents=["first", "second"],
+            base_url="http://localhost:8080/rerank",
+            api_key=None,
+            top_n=1,
+        )
+    )
+
+    assert captured["json"] == {
+        "query": "question",
+        "texts": ["first", "second"],
+        "raw_scores": False,
+        "truncate": True,
+    }
+    assert captured["url"] == "http://localhost:8080/rerank"
+    assert results == [{"index": 1, "relevance_score": 0.8}]
 
 
 def test_lightrag_adapter_query_reuses_initialized_rag() -> None:

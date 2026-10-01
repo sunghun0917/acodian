@@ -42,6 +42,12 @@ class LightWorklogQueryService:
             top_k=self._settings.lightrag_query_top_k,
             chunk_top_k=self._settings.lightrag_query_chunk_top_k,
             response_type=self._settings.lightrag_query_response_type,
+            enable_rerank=(
+                request.enable_rerank
+                if request.enable_rerank is not None
+                else self._settings.lightrag_rerank_enabled
+            ),
+            rerank_model=request.rerank_model,
             system_prompt=build_worklog_query_system_prompt(
                 worklog_detail_base_url=self._settings.worklog_detail_base_url,
             ),

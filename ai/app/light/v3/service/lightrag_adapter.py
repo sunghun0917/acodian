@@ -16,6 +16,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias
 
+import aiohttp
+
 from app.config.settings import Settings, settings
 from app.light.v3.service.worklog_custom_kg_builder import LightRagWorklogCustomKgDocument
 from app.light.v3.service.worklog_document_builder import LightRagWorklogDocument
@@ -79,6 +81,7 @@ class LightRagDependencies:
     gemini_embed: Any
     embedding_wrapper: EmbeddingWrapper
     query_param_class: type[Any]
+    tei_rerank_api: Callable[..., Awaitable[Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,8 @@ class LightRagQueryOptions:
     top_k: int
     chunk_top_k: int
     response_type: str
+    enable_rerank: bool = False
+    rerank_model: str | None = None
     system_prompt: str | None = None
 
 
@@ -170,10 +175,20 @@ class LightRagWorklogIndexAdapter:
     async def query_worklogs(self, options: LightRagQueryOptions) -> LightRagQueryResult:
         """LightRAG `mode="mix"` query를 실행하고 raw 결과를 반환한다."""
         try:
+            if (
+                options.enable_rerank
+                and options.rerank_model
+                and options.rerank_model != self._settings.lightrag_rerank_model
+            ):
+                raise LightRagConfigurationError(
+                    "TEI loads one reranker model per container; request model must match LIGHTRAG_RERANK_MODEL"
+                )
             rag = await self._get_initialized_rag()
             param = self._build_query_param(options)
             raw = await asyncio.wait_for(
-                rag.aquery_llm(options.query, param=param, system_prompt=options.system_prompt),
+                rag.aquery_llm(
+                    options.query, param=param, system_prompt=options.system_prompt
+                ),
                 timeout=self._settings.lightrag_query_timeout_seconds,
             )
             return LightRagQueryResult(raw=raw)
@@ -233,6 +248,10 @@ class LightRagWorklogIndexAdapter:
             "vector_db_storage_cls_kwargs": {},
             "addon_params": {"language": self._settings.lightrag_kg_language},
         }
+        if self._rerank_endpoint_configured():
+            lightrag_kwargs["rerank_model_func"] = self._build_rerank_model_func(
+                dependencies
+            )
         workspace = self._settings.lightrag_workspace.strip()
         if workspace:
             lightrag_kwargs["workspace"] = workspace
@@ -248,9 +267,40 @@ class LightRagWorklogIndexAdapter:
             top_k=options.top_k,
             chunk_top_k=options.chunk_top_k,
             response_type=options.response_type,
+            enable_rerank=(
+                options.enable_rerank and self._rerank_endpoint_configured()
+            ),
         )
 
-    """방어로직"""
+    def _rerank_endpoint_configured(self) -> bool:
+        """Return whether an API endpoint is configured for reranking."""
+        return bool(
+            self._settings.lightrag_rerank_binding_host.strip()
+        )
+
+    def _build_rerank_model_func(
+        self, dependencies: LightRagDependencies
+    ) -> Callable[..., Awaitable[Any]]:
+        """Build a TEI reranker compatible with its native request and response format."""
+        rerank_api = dependencies.tei_rerank_api or _call_tei_rerank_api
+
+        async def rerank_model_func(
+            query: str,
+            documents: list[str],
+            top_n: int | None = None,
+            extra_body: dict[str, Any] | None = None,
+        ) -> Any:
+            return await rerank_api(
+                query=query,
+                documents=documents,
+                base_url=self._settings.lightrag_rerank_binding_host.strip(),
+                api_key=self._settings.lightrag_rerank_api_key.strip() or None,
+                top_n=top_n,
+            )
+
+        return rerank_model_func
+
+
     def _ensure_required_config(self) -> None:
         """LightRAG runtime에 필요한 설정이 있는지 확인한다."""
         if not self._settings.gemini_api_key_candidates:
@@ -276,6 +326,40 @@ class LightRagWorklogIndexAdapter:
 
 
 
+async def _call_tei_rerank_api(
+    *,
+    query: str,
+    documents: list[str],
+    base_url: str,
+    api_key: str | None,
+    top_n: int | None = None,
+) -> list[dict[str, Any]]:
+    """Call TEI's native `/rerank` endpoint and adapt its ranks for LightRAG."""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "query": query,
+        "texts": documents,
+        "raw_scores": False,
+        "truncate": True,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(base_url, json=payload, headers=headers) as response:
+            if response.status >= 400:
+                raise RuntimeError(f"TEI rerank API returned HTTP {response.status}")
+            ranks = await response.json()
+    if not isinstance(ranks, list):
+        raise ValueError("TEI rerank API response must be a list")
+    normalized = [
+        {"index": rank["index"], "relevance_score": rank["score"]}
+        for rank in ranks
+    ]
+    normalized.sort(key=lambda rank: rank["relevance_score"], reverse=True)
+    return normalized[:top_n] if top_n is not None else normalized
+
+    """방어로직"""
+
 def _load_lightrag_dependencies() -> LightRagDependencies:
     """LightRAG package와 Gemini wrapper를 지연 import한다."""
     try:
@@ -292,6 +376,7 @@ def _load_lightrag_dependencies() -> LightRagDependencies:
         gemini_embed=gemini_embed,
         embedding_wrapper=wrap_embedding_func_with_attrs,
         query_param_class=QueryParam,
+        tei_rerank_api=_call_tei_rerank_api,
     )
 
 
