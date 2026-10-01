@@ -1,0 +1,68 @@
+{
+  "started_at": "2026-09-30T10:54:38.041245+00:00",
+  "contract": {
+    "model": "gemini-3.5-flash-lite",
+    "judge_model": "gemini-3.8-flash",
+    "embedding_model": "gemini-embedding-001",
+    "versions": {
+      "ragas": "0.4.3",
+      "lightrag-hku": "1.4.10",
+      "google-genai": "1.73.1",
+      "instructor": "1.15.4"
+    },
+    "hashes": {
+      "docs/ai/evaluation/v4/run_ragas_reranker.py": "761a52155f3aef7d3c5ed535b82517986c1aec3236316fc87242f343693dc6ab",
+      "docs/ai/evaluation/v1/run_ragas.py": "66d72f10ae945da021dd990013f4913d57ca2699cba91d8694e47854bceb25bf",
+      "docs/ai/evaluation/v4/benchmark-v4.jsonl": "e882f7c1d45a6c83a25cd52b26b919a32b0dc8b74ea00c0feaad7a092454065c",
+      "docs/ai/evaluation/v3/validation-details.jsonl": "9ecfd27e8ad9722ac4c6284a3279431884e47f7667074f131e812c2059138eb8",
+      "docs/ai/evaluation/v3/manifest.json": "a87cab8110d1ebc05472cf3700e5f7791c735db1dda06531c3cfae1eb0dfbb41",
+      "docs/ai/evaluation/v1/evaluation-corpus-v1.sql": "eb825533aaee69447a6192186d303063ead52f22f31d30ca6b70255865791c80",
+      "docs/ai/evaluation/v1/generate_corpus.py": "3873523344f871dd42a5e9c58163d692cb4bf57c470da95b12d2b9fae75344fc",
+      "ai/app/light/v3/service/lightrag_adapter.py": "e2b881204d73db816e28c5db498723f98d6c59a68e2c1b48aab7e25241328cd6"
+    },
+    "preflight": {
+      "indexed_documents": 200,
+      "exact_text_match": true,
+      "full_docs_sha256": "5eaeb7958d9964bfd6389ea2df5f6f7913d13ce635713a966b308dc6ad4d4127",
+      "doc_status_sha256": "dcbf2eef6f41685ea88f5df7e0979ab9db1952b63a0e810578525b8f64a948b0"
+    },
+    "params": {
+      "top_k": 10,
+      "chunk_top_k": 5,
+      "max_entity_tokens": 3000,
+      "max_relation_tokens": 3000,
+      "max_total_tokens": 12000,
+      "enable_rerank": true,
+      "stream": false,
+      "include_references": true,
+      "only_need_prompt": true,
+      "response_type": "Short Korean answer"
+    },
+    "features": {
+      "postgres_relation_repair": false,
+      "anchor_replacement": false,
+      "extra_neo4j_expansion": false,
+      "rerank": true,
+      "builtin_mix_graph": true
+    },
+    "prompt_sha256": "d544e4e7b07cb0ae2849ea6938ef57a5843bf9559f54282eea0a67ce0d8b6d13",
+    "configuration_sha256": "630b299e12fec0de39ccf29e8e12fb9870fa4e04d47e11f8f203e5a2cee8868d",
+    "temperature": 0,
+    "metrics": [
+      "faithfulness",
+      "answer_relevancy",
+      "context_precision_chunks",
+      "context_recall",
+      "factual_correctness"
+    ],
+    "factual": {
+      "mode": "f1",
+      "atomicity": "high",
+      "coverage": "high"
+    },
+    "response_cache": false,
+    "keyword_cache": true,
+    "benchmark_version": "v4",
+    "row_id_prefix": "v4"
+  }
+}
