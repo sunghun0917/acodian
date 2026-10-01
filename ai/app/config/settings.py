@@ -66,10 +66,14 @@ class Settings(BaseSettings):
     lightrag_vector_storage: str = "QdrantVectorDBStorage"
     lightrag_qdrant_url: str = "http://localhost:6333"
     lightrag_qdrant_api_key: str = ""
-    lightrag_query_timeout_seconds: int = 120
-    lightrag_query_top_k: int = 40
-    lightrag_query_chunk_top_k: int = 20
+    lightrag_query_timeout_seconds: int = 300
+    lightrag_query_top_k: int = 10
+    lightrag_query_chunk_top_k: int = 5
     lightrag_query_response_type: str = "Multiple Paragraphs"
+    lightrag_rerank_enabled: bool = False
+    lightrag_rerank_model: str = "bongsoo/klue-cross-encoder-v1"
+    lightrag_rerank_binding_host: str = ""
+    lightrag_rerank_api_key: str = ""
     worklog_detail_base_url: str = "https://k14s209.p.ssafy.io:8443/worklog/detail"
     lightrag_graph_storage: str = "Neo4JStorage"
     lightrag_neo4j_database: str = "neo4j"

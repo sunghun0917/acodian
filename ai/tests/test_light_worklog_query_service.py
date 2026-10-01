@@ -59,6 +59,7 @@ def test_query_service_applies_settings_defaults_and_normalizes_reference() -> N
     assert call.top_k == 11
     assert call.chunk_top_k == 5
     assert call.response_type == "Multiple Paragraphs"
+    assert call.enable_rerank is False
     assert call.system_prompt is not None
     assert "allowedTeamIds" not in call.system_prompt
     assert "Access Scope" not in call.system_prompt
@@ -68,6 +69,35 @@ def test_query_service_applies_settings_defaults_and_normalizes_reference() -> N
     assert response.references[1].reference_id == "2"
     assert response.references[1].file_path == "worklog://2"
     assert response.internal_only is True
+
+
+def test_query_service_enables_rerank_per_query() -> None:
+    adapter = FakeAdapter(
+        {"llm_response": {"content": "answer"}, "data": {"references": []}}
+    )
+    settings = Settings(_env_file=None, lightrag_rerank_enabled=False)
+    service = LightWorklogQueryService(settings_obj=settings, adapter_factory=lambda: adapter)
+
+    asyncio.run(service.query_worklogs(make_request(enableRerank=True)))
+
+    assert adapter.calls[0].enable_rerank is True
+
+
+def test_query_service_passes_rerank_model_override() -> None:
+    adapter = FakeAdapter(
+        {"llm_response": {"content": "answer"}, "data": {"references": []}}
+    )
+    service = LightWorklogQueryService(
+        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter
+    )
+
+    asyncio.run(
+        service.query_worklogs(
+            make_request(enableRerank=True, rerankModel="BAAI/custom-reranker")
+        )
+    )
+
+    assert adapter.calls[0].rerank_model == "BAAI/custom-reranker"
 
 
 def test_query_service_omits_allowed_team_ids_from_system_prompt() -> None:

@@ -134,9 +134,9 @@ def test_settings_has_lightrag_query_defaults(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.lightrag_workspace == ""
-    assert settings.lightrag_query_timeout_seconds == 120
-    assert settings.lightrag_query_top_k == 40
-    assert settings.lightrag_query_chunk_top_k == 20
+    assert settings.lightrag_query_timeout_seconds == 300
+    assert settings.lightrag_query_top_k == 10
+    assert settings.lightrag_query_chunk_top_k == 5
     assert settings.lightrag_query_response_type == "Multiple Paragraphs"
 
 
@@ -232,3 +232,13 @@ def test_settings_normalizes_gemini_api_key_candidates(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.gemini_api_key_candidates == ["key-a", "key-b", "key-c"]
+
+
+def test_settings_configures_optional_lightrag_reranker(monkeypatch) -> None:
+    monkeypatch.delenv("LIGHTRAG_RERANK_ENABLED", raising=False)
+    monkeypatch.delenv("LIGHTRAG_RERANK_MODEL", raising=False)
+    monkeypatch.setenv("LIGHTRAG_RERANK_BINDING_HOST", "http://localhost:8080/rerank")
+    settings = Settings(_env_file=None)
+    assert settings.lightrag_rerank_enabled is False
+    assert settings.lightrag_rerank_model == "bongsoo/klue-cross-encoder-v1"
+    assert settings.lightrag_rerank_binding_host == "http://localhost:8080/rerank"

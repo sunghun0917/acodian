@@ -13,6 +13,10 @@ class WorklogLightQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1)
+    enable_rerank: bool | None = Field(default=None, alias="enableRerank")
+    rerank_model: str | None = Field(
+        default=None, alias="rerankModel", min_length=1, max_length=200
+    )
     allowed_team_ids: list[int] | None = Field(default=None, alias="allowedTeamIds")
 
 
