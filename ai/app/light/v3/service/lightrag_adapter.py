@@ -175,14 +175,18 @@ class LightRagWorklogIndexAdapter:
     async def query_worklogs(self, options: LightRagQueryOptions) -> LightRagQueryResult:
         """LightRAG `mode="mix"` query를 실행하고 raw 결과를 반환한다."""
         try:
-            if (
-                options.enable_rerank
-                and options.rerank_model
-                and options.rerank_model != self._settings.lightrag_rerank_model
-            ):
-                raise LightRagConfigurationError(
-                    "TEI loads one reranker model per container; request model must match LIGHTRAG_RERANK_MODEL"
-                )
+            if options.enable_rerank:
+                if not self._rerank_endpoint_configured():
+                    raise LightRagConfigurationError(
+                        "Reranking is requested but LIGHTRAG_RERANK_BINDING_HOST is not configured"
+                    )
+                if (
+                    options.rerank_model
+                    and options.rerank_model != self._settings.lightrag_rerank_model
+                ):
+                    raise LightRagConfigurationError(
+                        "TEI loads one reranker model per container; request model must match LIGHTRAG_RERANK_MODEL"
+                    )
             rag = await self._get_initialized_rag()
             param = self._build_query_param(options)
             raw = await asyncio.wait_for(
@@ -259,6 +263,10 @@ class LightRagWorklogIndexAdapter:
 
     def _build_query_param(self, options: LightRagQueryOptions) -> Any:
         """LightRAG QueryParam을 내부 정책값으로 구성한다."""
+        if options.enable_rerank and not self._rerank_endpoint_configured():
+            raise LightRagConfigurationError(
+                "Reranking is requested but LIGHTRAG_RERANK_BINDING_HOST is not configured"
+            )
         dependencies = self._dependencies or _load_lightrag_dependencies()
         return dependencies.query_param_class(
             mode="mix",
@@ -268,7 +276,7 @@ class LightRagWorklogIndexAdapter:
             chunk_top_k=options.chunk_top_k,
             response_type=options.response_type,
             enable_rerank=(
-                options.enable_rerank and self._rerank_endpoint_configured()
+                bool(options.enable_rerank)
             ),
         )
 
