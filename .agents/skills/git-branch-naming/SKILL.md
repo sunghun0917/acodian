@@ -38,7 +38,7 @@ description: 현재 AX-WMS 모노레포 프로젝트의 브랜치 네이밍과 �
 - `feat/web/login-flow`
 - `feat/ai/embedding-pipeline`
 - `chore/infra/routing-cleanup`
-- `docs/schema/sql-guide-sync`
+- `docs/docs/sql-guide-sync`
 
 ## 네이밍 원칙
 - 모두 소문자 사용
@@ -61,8 +61,8 @@ description: 현재 AX-WMS 모노레포 프로젝트의 브랜치 네이밍과 �
 - `hotfix`
 
 ## 예시
-- `docs/schema/sql-guide-sync`
-- `docs/guide/enum-alignment`
+- `docs/docs/sql-guide-sync`
+- `docs/docs/enum-alignment`
 - `feat/web/login-flow`
 - `fix/web/dashboard-filter`
 - `feat/api/auth-login`
