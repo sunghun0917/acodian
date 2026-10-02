@@ -13,4 +13,4 @@
 
 ## 3. 독립 검증 및 자체 승인 차단 (Independent Verification)
 - 구현 에이전트는 절대 자신의 작업물을 최종 완료로 승인하지 않습니다.
-- 반드시 `qa_verifier`가 자동화 테스트(`./gradlew test`, `pytest`)를 돌려 100% 통과했을 때만 승인합니다.
+- 반드시 `agy_verifier`가 자동화 테스트(`./gradlew test`, `pytest`)를 돌려 100% 통과했을 때만 승인합니다.
