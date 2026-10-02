@@ -759,6 +759,35 @@ def test_lightrag_adapter_configures_tei_reranker() -> None:
     }
 
 
+def test_lightrag_adapter_query_raises_when_rerank_requested_without_endpoint() -> None:
+    dependencies, _, _, _ = make_dependencies(FakeQueryLightRAG)
+    settings = make_settings()
+    settings.lightrag_rerank_binding_host = ""
+    adapter = LightRagWorklogIndexAdapter(settings_obj=settings, dependencies=dependencies)
+
+    async def run_case() -> None:
+        with pytest.raises(LightRagConfigurationError, match="LIGHTRAG_RERANK_BINDING_HOST"):
+            await adapter.query_worklogs(make_query_options(enable_rerank=True))
+
+    asyncio.run(run_case())
+
+
+def test_lightrag_adapter_query_raises_when_rerank_model_mismatches() -> None:
+    dependencies, _, _, _ = make_dependencies(FakeQueryLightRAG)
+    settings = make_settings()
+    settings.lightrag_rerank_binding_host = "http://localhost:8080/rerank"
+    settings.lightrag_rerank_model = "BAAI/bge-reranker-v2-m3"
+    adapter = LightRagWorklogIndexAdapter(settings_obj=settings, dependencies=dependencies)
+
+    async def run_case() -> None:
+        with pytest.raises(LightRagConfigurationError, match="LIGHTRAG_RERANK_MODEL"):
+            await adapter.query_worklogs(
+                make_query_options(enable_rerank=True, rerank_model="different/model")
+            )
+
+    asyncio.run(run_case())
+
+
 def test_tei_rerank_api_uses_native_payload_and_normalizes_results(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
