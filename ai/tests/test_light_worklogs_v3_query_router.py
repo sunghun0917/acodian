@@ -39,6 +39,13 @@ class FakeQueryService:
             raise self.response
         return self.response
 
+    async def query_worklogs_stream(self, request: Any):
+        self.calls.append(request)
+        if isinstance(self.response, Exception):
+            raise self.response
+        yield {"event": "token", "data": "chunk-1"}
+        yield {"event": "done", "data": "{\"references\": [], \"done\": true}"}
+
 
 def install_fake_service(monkeypatch, service: FakeQueryService) -> None:
     from app.light.v3.router import worklog_query
@@ -176,3 +183,31 @@ def test_light_worklogs_v3_query_maps_provider_unavailable(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json() == {"detail": "LIGHTRAG_PROVIDER_UNAVAILABLE"}
+
+
+def test_light_worklogs_v3_query_stream_success(monkeypatch) -> None:
+    service = FakeQueryService()
+    install_fake_service(monkeypatch, service)
+
+    response = client.post(
+        "/ai/light/worklogs-v3/query/stream",
+        json={"query": "요약해줘"},
+    )
+
+    assert response.status_code == 200
+    assert "event: token" in response.text
+    assert "chunk-1" in response.text
+    assert "event: done" in response.text
+
+
+def test_light_worklogs_v3_query_stream_timeout(monkeypatch) -> None:
+    install_fake_service(monkeypatch, FakeQueryService(LightRagQueryTimeoutError("timeout")))
+
+    response = client.post(
+        "/ai/light/worklogs-v3/query/stream",
+        json={"query": "요약해줘"},
+    )
+
+    assert response.status_code == 200
+    assert "event: error" in response.text
+    assert "LIGHTRAG_QUERY_TIMEOUT" in response.text

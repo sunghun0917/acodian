@@ -17,6 +17,10 @@ from app.light.v3.service.lightrag_adapter import (
     LightRagQueryFailedError,
     LightRagQueryTimeoutError,
 )
+from app.light.v3.service.taskgroup_search import (
+    apply_taskgroup_search_patch,
+    remove_taskgroup_search_patch,
+)
 from app.light.v3.service.worklog_query_service import LightWorklogQueryService
 
 router = APIRouter(prefix="/light/worklogs-v3", tags=["light-worklogs-v3"])
@@ -35,9 +39,13 @@ def get_worklog_query_service() -> LightWorklogQueryService:
 )
 async def query_worklogs(
     request: WorklogLightQueryRequest,
+    req: Request,
     service: Annotated[LightWorklogQueryService, Depends(get_worklog_query_service)],
 ) -> WorklogLightQueryResponse:
     """내부 검증용 LightRAG `mode="mix"` query를 실행한다."""
+    disabled = req.headers.get("x-disable-taskgroup") == "true"
+    if disabled:
+        remove_taskgroup_search_patch()
     try:
         return await service.query_worklogs(request)
     except LightRagConfigurationError as exc:
@@ -60,6 +68,9 @@ async def query_worklogs(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="LIGHTRAG_QUERY_FAILED",
         ) from exc
+    finally:
+        if disabled:
+            apply_taskgroup_search_patch()
 
 
 @router.post("/query/stream")
@@ -69,6 +80,10 @@ async def query_worklogs_stream(
     service: Annotated[LightWorklogQueryService, Depends(get_worklog_query_service)],
 ) -> EventSourceResponse:
     """내부 검증용 LightRAG `mode="mix"` query를 SSE 스트리밍으로 실행한다."""
+    disabled = req.headers.get("x-disable-taskgroup") == "true"
+    if disabled:
+        remove_taskgroup_search_patch()
+
     async def event_generator():
         try:
             async for event in service.query_worklogs_stream(request):
@@ -83,6 +98,9 @@ async def query_worklogs_stream(
             yield {"event": "error", "data": "LIGHTRAG_PROVIDER_UNAVAILABLE"}
         except Exception:
             yield {"event": "error", "data": "LIGHTRAG_QUERY_FAILED"}
+        finally:
+            if disabled:
+                apply_taskgroup_search_patch()
 
     return EventSourceResponse(
         event_generator(),

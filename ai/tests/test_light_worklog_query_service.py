@@ -12,18 +12,30 @@ from app.light.v3.service.lightrag_adapter import (
     LightRagQueryFailedError,
     LightRagQueryOptions,
     LightRagQueryResult,
+    LightRagQueryTimeoutError,
 )
 from app.light.v3.service.worklog_query_service import LightWorklogQueryService
 
 
 class FakeAdapter:
-    def __init__(self, raw: dict[str, Any]) -> None:
+    def __init__(self, raw: dict[str, Any], iterator: Any = None) -> None:
         self.raw = raw
+        self.iterator = iterator
         self.calls: list[LightRagQueryOptions] = []
 
     async def query_worklogs(self, options: LightRagQueryOptions) -> LightRagQueryResult:
         self.calls.append(options)
         return LightRagQueryResult(raw=self.raw)
+
+    async def query_worklogs_stream(self, options: LightRagQueryOptions) -> tuple[Any, Any]:
+        self.calls.append(options)
+        iterator = self.iterator
+        if iterator is None:
+            async def default_gen():
+                yield "tok1"
+                yield "tok2"
+            iterator = default_gen()
+        return iterator, self.raw
 
 
 def make_request(**overrides: Any) -> WorklogLightQueryRequest:
@@ -196,3 +208,47 @@ def test_query_service_allows_missing_references() -> None:
 
     assert response.answer == "answer"
     assert response.references == []
+
+
+def test_query_service_stream_yields_tokens_and_done() -> None:
+    adapter = FakeAdapter({"data": {"references": [{"reference_id": "r1", "file_path": "fp1"}]}})
+    service = LightWorklogQueryService(
+        settings_obj=Settings(_env_file=None),
+        adapter_factory=lambda: adapter,
+    )
+
+    async def collect():
+        events = []
+        async for event in service.query_worklogs_stream(make_request()):
+            events.append(event)
+        return events
+
+    events = asyncio.run(collect())
+    assert len(events) == 3
+    assert events[0] == {"event": "token", "data": "tok1"}
+    assert events[1] == {"event": "token", "data": "tok2"}
+    assert events[2]["event"] == "done"
+    assert "r1" in events[2]["data"]
+
+
+def test_query_service_stream_enforces_timeout() -> None:
+    async def hanging_gen():
+        yield "fast-token"
+        await asyncio.sleep(1.0)
+        yield "late-token"
+
+    adapter = FakeAdapter({"data": {"references": []}}, iterator=hanging_gen())
+    settings = Settings(_env_file=None, lightrag_query_timeout_seconds=1)
+    service = LightWorklogQueryService(
+        settings_obj=settings,
+        adapter_factory=lambda: adapter,
+    )
+
+    async def collect():
+        events = []
+        async for event in service.query_worklogs_stream(make_request()):
+            events.append(event)
+        return events
+
+    with pytest.raises(LightRagQueryTimeoutError):
+        asyncio.run(collect())
