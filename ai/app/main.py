@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 from app.config.settings import settings
 from app.light.v3.service.lightrag_adapter import close_lightrag_worklog_index_adapter
+from app.light.v3.service.taskgroup_search import apply_taskgroup_search_patch
 from app.router import api_router
 
 
@@ -28,6 +29,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    apply_taskgroup_search_patch()
     is_production = settings.environment == "production"
     app = FastAPI(
         title=settings.app_name,

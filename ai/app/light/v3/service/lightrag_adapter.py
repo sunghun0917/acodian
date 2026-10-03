@@ -375,6 +375,9 @@ def _load_lightrag_dependencies() -> LightRagDependencies:
         from lightrag.base import QueryParam
         from lightrag.llm.gemini import gemini_embed, gemini_model_complete
         from lightrag.utils import wrap_embedding_func_with_attrs
+        from app.light.v3.service.taskgroup_search import apply_taskgroup_search_patch
+
+        apply_taskgroup_search_patch()
     except Exception as exc:  # pragma: no cover - 환경별 import 실패는 config error로만 노출한다.
         raise LightRagConfigurationError("LightRAG dependency import failed") from exc
 
