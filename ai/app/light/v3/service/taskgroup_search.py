@@ -17,6 +17,39 @@ _ORIGINAL_PERFORM_KG_SEARCH = None
 _PATCH_APPLIED = False
 
 
+async def _compute_vector_chunks_and_embedding(
+    query: str,
+    chunks_vdb: Any,
+    query_param: Any,
+    text_chunks_db: Any,
+    kg_chunk_pick_method: str,
+) -> tuple[list[Any], Any]:
+    """임베딩 계산과 Qdrant 벡터 검색을 단일 태스크로 묶어 비동기 병렬 실행한다."""
+    from lightrag.operate import _get_vector_context
+
+    query_embedding = None
+    if query and (kg_chunk_pick_method == "VECTOR" or chunks_vdb):
+        actual_embedding_func = getattr(text_chunks_db, "embedding_func", None)
+        if actual_embedding_func:
+            try:
+                embeddings = await actual_embedding_func([query])
+                query_embedding = embeddings[0]
+                logger.debug("[TaskGroup] Pre-computed query embedding inside vector task")
+            except Exception as e:
+                logger.warning(f"[TaskGroup] Failed to pre-compute query embedding: {e}")
+                query_embedding = None
+
+    vector_chunks = []
+    if chunks_vdb:
+        vector_chunks = await _get_vector_context(
+            query,
+            chunks_vdb,
+            query_param,
+            query_embedding,
+        )
+    return vector_chunks, query_embedding
+
+
 async def parallel_perform_kg_search(
     query: str,
     ll_keywords: str,
@@ -33,7 +66,6 @@ async def parallel_perform_kg_search(
         DEFAULT_KG_CHUNK_PICK_METHOD,
         _get_edge_data,
         _get_node_data,
-        _get_vector_context,
     )
 
     local_entities = []
@@ -42,21 +74,11 @@ async def parallel_perform_kg_search(
     global_relations = []
     vector_chunks = []
     chunk_tracking = {}
+    query_embedding = None
 
     kg_chunk_pick_method = text_chunks_db.global_config.get(
         "kg_chunk_pick_method", DEFAULT_KG_CHUNK_PICK_METHOD
     )
-    query_embedding = None
-    if query and (kg_chunk_pick_method == "VECTOR" or chunks_vdb):
-        actual_embedding_func = text_chunks_db.embedding_func
-        if actual_embedding_func:
-            try:
-                query_embedding = await actual_embedding_func([query])
-                query_embedding = query_embedding[0]
-                logger.debug("Pre-computed query embedding for all vector operations")
-            except Exception as e:
-                logger.warning(f"Failed to pre-compute query embedding: {e}")
-                query_embedding = None
 
     if query_param.mode == "local" and len(ll_keywords) > 0:
         local_entities, local_relations = await _get_node_data(
@@ -65,6 +87,14 @@ async def parallel_perform_kg_search(
             entities_vdb,
             query_param,
         )
+        if query and kg_chunk_pick_method == "VECTOR":
+            actual_embedding_func = getattr(text_chunks_db, "embedding_func", None)
+            if actual_embedding_func:
+                try:
+                    embeddings = await actual_embedding_func([query])
+                    query_embedding = embeddings[0]
+                except Exception as e:
+                    logger.warning(f"Failed to pre-compute query embedding: {e}")
     elif query_param.mode == "global" and len(hl_keywords) > 0:
         global_relations, global_entities = await _get_edge_data(
             hl_keywords,
@@ -72,6 +102,14 @@ async def parallel_perform_kg_search(
             relationships_vdb,
             query_param,
         )
+        if query and kg_chunk_pick_method == "VECTOR":
+            actual_embedding_func = getattr(text_chunks_db, "embedding_func", None)
+            if actual_embedding_func:
+                try:
+                    embeddings = await actual_embedding_func([query])
+                    query_embedding = embeddings[0]
+                except Exception as e:
+                    logger.warning(f"Failed to pre-compute query embedding: {e}")
     else:
         # hybrid or mix mode: asyncio.TaskGroup을 통한 완전 병렬화 실행
         task_local = None
@@ -98,13 +136,14 @@ async def parallel_perform_kg_search(
                         query_param,
                     )
                 )
-            if query_param.mode == "mix" and chunks_vdb:
+            if (query_param.mode == "mix" and chunks_vdb) or kg_chunk_pick_method == "VECTOR":
                 task_vector = tg.create_task(
-                    _get_vector_context(
+                    _compute_vector_chunks_and_embedding(
                         query,
-                        chunks_vdb,
+                        chunks_vdb if query_param.mode == "mix" else None,
                         query_param,
-                        query_embedding,
+                        text_chunks_db,
+                        kg_chunk_pick_method,
                     )
                 )
 
@@ -113,7 +152,7 @@ async def parallel_perform_kg_search(
         if task_global is not None:
             global_relations, global_entities = task_global.result()
         if task_vector is not None:
-            vector_chunks = task_vector.result()
+            vector_chunks, query_embedding = task_vector.result()
             for i, chunk in enumerate(vector_chunks):
                 chunk_id = chunk.get("chunk_id") or chunk.get("id")
                 if chunk_id:

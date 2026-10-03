@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 import json
 from typing import Any
@@ -15,6 +16,7 @@ from app.light.v3.model.worklog_query import (
 from app.light.v3.service.lightrag_adapter import (
     LightRagQueryFailedError,
     LightRagQueryOptions,
+    LightRagQueryTimeoutError,
     get_lightrag_worklog_index_adapter,
 )
 from app.light.v3.prompt.worklog_query_prompt import build_worklog_query_system_prompt
@@ -83,12 +85,29 @@ class LightWorklogQueryService:
             ),
             stream=True,
         )
+        start_time = asyncio.get_running_loop().time()
+        timeout_seconds = float(self._settings.lightrag_query_timeout_seconds)
+        deadline = start_time + timeout_seconds
+
         response_iterator, raw = await self._adapter_factory().query_worklogs_stream(options)
 
         if response_iterator is not None:
-            async for token in response_iterator:
-                if token:
-                    yield {"event": "token", "data": token}
+            try:
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise LightRagQueryTimeoutError("LightRAG stream token iteration timed out")
+                    try:
+                        token = await asyncio.wait_for(
+                            anext(response_iterator),
+                            timeout=remaining,
+                        )
+                        if token:
+                            yield {"event": "token", "data": token}
+                    except StopAsyncIteration:
+                        break
+            except TimeoutError as exc:
+                raise LightRagQueryTimeoutError("LightRAG stream timed out") from exc
 
         references = [
             item.model_dump(by_alias=True)
