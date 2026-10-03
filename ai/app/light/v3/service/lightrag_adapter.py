@@ -233,6 +233,10 @@ class LightRagWorklogIndexAdapter:
             )
             llm_response = raw.get("llm_response") if isinstance(raw, dict) else {}
             response_iterator = llm_response.get("response_iterator")
+            if response_iterator is None or not hasattr(response_iterator, "__anext__"):
+                raise LightRagQueryFailedError(
+                    "LightRAG stream query returned an invalid response iterator"
+                )
             return response_iterator, raw
         except LightRagConfigurationError:
             raise

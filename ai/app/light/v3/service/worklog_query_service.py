@@ -91,23 +91,27 @@ class LightWorklogQueryService:
 
         response_iterator, raw = await self._adapter_factory().query_worklogs_stream(options)
 
-        if response_iterator is not None:
-            try:
-                while True:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    if remaining <= 0:
-                        raise LightRagQueryTimeoutError("LightRAG stream token iteration timed out")
-                    try:
-                        token = await asyncio.wait_for(
-                            anext(response_iterator),
-                            timeout=remaining,
-                        )
-                        if token:
-                            yield {"event": "token", "data": token}
-                    except StopAsyncIteration:
-                        break
-            except TimeoutError as exc:
-                raise LightRagQueryTimeoutError("LightRAG stream timed out") from exc
+        if response_iterator is None or not hasattr(response_iterator, "__anext__"):
+            raise LightRagQueryFailedError(
+                "LightRAG stream query returned an invalid response iterator"
+            )
+
+        try:
+            while True:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise LightRagQueryTimeoutError("LightRAG stream token iteration timed out")
+                try:
+                    token = await asyncio.wait_for(
+                        anext(response_iterator),
+                        timeout=remaining,
+                    )
+                    if token:
+                        yield {"event": "token", "data": token}
+                except StopAsyncIteration:
+                    break
+        except TimeoutError as exc:
+            raise LightRagQueryTimeoutError("LightRAG stream timed out") from exc
 
         references = [
             item.model_dump(by_alias=True)
