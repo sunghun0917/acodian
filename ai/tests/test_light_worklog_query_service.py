@@ -17,8 +17,11 @@ from app.light.v3.service.lightrag_adapter import (
 from app.light.v3.service.worklog_query_service import LightWorklogQueryService
 
 
+_DEFAULT_ITERATOR = object()
+
+
 class FakeAdapter:
-    def __init__(self, raw: dict[str, Any], iterator: Any = None) -> None:
+    def __init__(self, raw: dict[str, Any], iterator: Any = _DEFAULT_ITERATOR) -> None:
         self.raw = raw
         self.iterator = iterator
         self.calls: list[LightRagQueryOptions] = []
@@ -30,7 +33,7 @@ class FakeAdapter:
     async def query_worklogs_stream(self, options: LightRagQueryOptions) -> tuple[Any, Any]:
         self.calls.append(options)
         iterator = self.iterator
-        if iterator is None:
+        if iterator is _DEFAULT_ITERATOR:
             async def default_gen():
                 yield "tok1"
                 yield "tok2"
@@ -252,3 +255,38 @@ def test_query_service_stream_enforces_timeout() -> None:
 
     with pytest.raises(LightRagQueryTimeoutError):
         asyncio.run(collect())
+
+
+def test_query_service_stream_rejects_missing_iterator() -> None:
+    adapter = FakeAdapter({"data": {"references": []}}, iterator=None)
+    service = LightWorklogQueryService(
+        settings_obj=Settings(_env_file=None),
+        adapter_factory=lambda: adapter,
+    )
+
+    async def collect():
+        events = []
+        async for event in service.query_worklogs_stream(make_request()):
+            events.append(event)
+        return events
+
+    with pytest.raises(LightRagQueryFailedError, match="invalid response iterator"):
+        asyncio.run(collect())
+
+
+def test_query_service_stream_rejects_non_async_iterator() -> None:
+    adapter = FakeAdapter({"data": {"references": []}}, iterator=["not", "async"])
+    service = LightWorklogQueryService(
+        settings_obj=Settings(_env_file=None),
+        adapter_factory=lambda: adapter,
+    )
+
+    async def collect():
+        events = []
+        async for event in service.query_worklogs_stream(make_request()):
+            events.append(event)
+        return events
+
+    with pytest.raises(LightRagQueryFailedError, match="invalid response iterator"):
+        asyncio.run(collect())
+
