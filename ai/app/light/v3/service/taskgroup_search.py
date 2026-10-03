@@ -202,3 +202,18 @@ def apply_taskgroup_search_patch() -> None:
         logger.info("[TaskGroup] Successfully patched lightrag.operate._perform_kg_search with asyncio.TaskGroup")
     except Exception as e:
         logger.warning(f"[TaskGroup] Failed to patch lightrag.operate._perform_kg_search: {e}")
+
+
+def remove_taskgroup_search_patch() -> None:
+    """lightrag.operate._perform_kg_search를 원래 순차 실행 함수로 복원한다."""
+    global _ORIGINAL_PERFORM_KG_SEARCH, _PATCH_APPLIED
+    if not _PATCH_APPLIED or _ORIGINAL_PERFORM_KG_SEARCH is None:
+        return
+
+    try:
+        import lightrag.operate
+        lightrag.operate._perform_kg_search = _ORIGINAL_PERFORM_KG_SEARCH
+        _PATCH_APPLIED = False
+        logger.info("[TaskGroup] Successfully restored original sequential _perform_kg_search")
+    except Exception as e:
+        logger.warning(f"[TaskGroup] Failed to restore original _perform_kg_search: {e}")
