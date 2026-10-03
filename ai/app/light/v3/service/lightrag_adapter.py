@@ -95,6 +95,7 @@ class LightRagQueryOptions:
     enable_rerank: bool = False
     rerank_model: str | None = None
     system_prompt: str | None = None
+    stream: bool = False
 
 
 @dataclass(frozen=True)
@@ -205,6 +206,43 @@ class LightRagWorklogIndexAdapter:
         except Exception as exc:
             raise LightRagQueryFailedError("LightRAG query failed") from exc
 
+    async def query_worklogs_stream(
+        self, options: LightRagQueryOptions
+    ) -> tuple[Any, Any]:
+        """LightRAG `mode="mix"` query를 stream 모드로 실행하고 (response_iterator, raw)를 반환한다."""
+        try:
+            if options.enable_rerank:
+                if not self._rerank_endpoint_configured():
+                    raise LightRagConfigurationError(
+                        "Reranking is requested but LIGHTRAG_RERANK_BINDING_HOST is not configured"
+                    )
+                if (
+                    options.rerank_model
+                    and options.rerank_model != self._settings.lightrag_rerank_model
+                ):
+                    raise LightRagConfigurationError(
+                        "TEI loads one reranker model per container; request model must match LIGHTRAG_RERANK_MODEL"
+                    )
+            rag = await self._get_initialized_rag()
+            param = self._build_query_param(options)
+            raw = await asyncio.wait_for(
+                rag.aquery_llm(
+                    options.query, param=param, system_prompt=options.system_prompt
+                ),
+                timeout=self._settings.lightrag_query_timeout_seconds,
+            )
+            llm_response = raw.get("llm_response") if isinstance(raw, dict) else {}
+            response_iterator = llm_response.get("response_iterator")
+            return response_iterator, raw
+        except LightRagConfigurationError:
+            raise
+        except LightRagProviderUnavailableError:
+            raise
+        except TimeoutError as exc:
+            raise LightRagQueryTimeoutError("LightRAG stream query timed out") from exc
+        except Exception as exc:
+            raise LightRagQueryFailedError("LightRAG stream query failed") from exc
+
     async def close(self) -> None:
         """초기화된 LightRAG storage를 finalize하고 singleton 재사용 상태를 초기화한다."""
         rag = self._rag
@@ -270,7 +308,7 @@ class LightRagWorklogIndexAdapter:
         dependencies = self._dependencies or _load_lightrag_dependencies()
         return dependencies.query_param_class(
             mode="mix",
-            stream=False,
+            stream=bool(options.stream),
             include_references=True,
             top_k=options.top_k,
             chunk_top_k=options.chunk_top_k,

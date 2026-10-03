@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+import json
 from typing import Any
 
 from app.config.settings import Settings, settings
@@ -60,6 +61,40 @@ class LightWorklogQueryService:
             references=_extract_references(raw),
             internalOnly=True,
         )
+
+    async def query_worklogs_stream(
+        self,
+        request: WorklogLightQueryRequest,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """LightRAG streaming query를 실행하고 SSE 이벤트를 yield하는 generator를 반환한다."""
+        options = LightRagQueryOptions(
+            query=request.query,
+            top_k=self._settings.lightrag_query_top_k,
+            chunk_top_k=self._settings.lightrag_query_chunk_top_k,
+            response_type=self._settings.lightrag_query_response_type,
+            enable_rerank=(
+                request.enable_rerank
+                if request.enable_rerank is not None
+                else self._settings.lightrag_rerank_enabled
+            ),
+            rerank_model=request.rerank_model,
+            system_prompt=build_worklog_query_system_prompt(
+                worklog_detail_base_url=self._settings.worklog_detail_base_url,
+            ),
+            stream=True,
+        )
+        response_iterator, raw = await self._adapter_factory().query_worklogs_stream(options)
+
+        if response_iterator is not None:
+            async for token in response_iterator:
+                if token:
+                    yield {"event": "token", "data": token}
+
+        references = [
+            item.model_dump(by_alias=True)
+            for item in _extract_references(raw)
+        ]
+        yield {"event": "done", "data": json.dumps({"references": references, "done": True})}
 
 
 def _extract_answer(raw: Any) -> str:

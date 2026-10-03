@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sse_starlette.sse import EventSourceResponse
 
 from app.light.v3.model.worklog_query import (
     WorklogLightQueryRequest,
@@ -59,3 +60,35 @@ async def query_worklogs(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="LIGHTRAG_QUERY_FAILED",
         ) from exc
+
+
+@router.post("/query/stream")
+async def query_worklogs_stream(
+    request: WorklogLightQueryRequest,
+    req: Request,
+    service: Annotated[LightWorklogQueryService, Depends(get_worklog_query_service)],
+) -> EventSourceResponse:
+    """내부 검증용 LightRAG `mode="mix"` query를 SSE 스트리밍으로 실행한다."""
+    async def event_generator():
+        try:
+            async for event in service.query_worklogs_stream(request):
+                if await req.is_disconnected():
+                    break
+                yield event
+        except LightRagConfigurationError:
+            yield {"event": "error", "data": "LIGHTRAG_CONFIGURATION_ERROR"}
+        except LightRagQueryTimeoutError:
+            yield {"event": "error", "data": "LIGHTRAG_QUERY_TIMEOUT"}
+        except LightRagProviderUnavailableError:
+            yield {"event": "error", "data": "LIGHTRAG_PROVIDER_UNAVAILABLE"}
+        except Exception:
+            yield {"event": "error", "data": "LIGHTRAG_QUERY_FAILED"}
+
+    return EventSourceResponse(
+        event_generator(),
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
