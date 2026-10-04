@@ -276,6 +276,7 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=<staging Neo4j strong random password>
 DB_PASSWORD=<staging 전용 강한 무작위 값, 최소 24자>
 JWT_SECRET=<staging 전용 최소 32바이트 무작위 값>
+AI_INTERNAL_TOKEN=<staging 전용 강한 무작위 내부 API 토큰>
 JWT_ACCESS_EXPIRATION=3600000
 JWT_REFRESH_EXPIRATION=1209600000
 AI_HOST_PORT=8201
@@ -310,6 +311,7 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=<production Neo4j strong random password>
 DB_PASSWORD=<production 전용 강한 무작위 값, staging 과 반드시 다른 값>
 JWT_SECRET=<production 전용 최소 32바이트 무작위 값, staging 과 반드시 다른 값>
+AI_INTERNAL_TOKEN=<production 전용 강한 무작위 내부 API 토큰, staging 과 반드시 다른 값>
 JWT_ACCESS_EXPIRATION=3600000
 JWT_REFRESH_EXPIRATION=1209600000
 AI_HOST_PORT=8200
@@ -494,8 +496,11 @@ GitLab auto-cancel 은 변경 영역(web/api/ai)이 아니라 ref 단위로 동�
 - 환경별 volume 이름 분리
 
 ### redis
-- `redis:7-alpine`
+- `redis:8.10.0-alpine` (Redis Search 포함)
 - healthcheck 포함
+- API와 AI에는 동일한 `AI_INTERNAL_TOKEN`을 필수 주입한다. 누락되면 compose 렌더가 실패한다. `infra/.env.example` 값은 스모크 전용이며 운영에 복사하지 않는다.
+
+> **Redis 7 → 8 배포 주의:** 운영 Redis를 이 문서 변경만으로 즉시 교체하지 않는다. Redis는 API 세션 및 AI 작업 큐와 공유하므로, 환경별로 기존 데이터와 복구 절차를 백업·확인하고 Redis 8 이미지로 별도 리허설한 뒤 유지보수 시간에 순차 전환한다. 로컬 compose의 `axwms-redis-data` 볼륨과 배포 compose의 볼륨 없는 정책은 그대로다. 배포 환경에서는 재기동 시 Redis 데이터가 보존된다고 가정하지 말고, 현재 컨테이너의 데이터 보존 방식과 큐·세션 영향부터 확인한다.
 
 ### api
 - `build:`가 아니라 `image: ${API_IMAGE}` 사용

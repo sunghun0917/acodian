@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:8.10.0-alpine
     ports:
       - "${REDIS_HOST_PORT:?REDIS_HOST_PORT required (env-specific offset, e.g. 8400/8401)}:6379"
     healthcheck:
@@ -86,6 +86,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       AI_WORKLOG_SEARCH_ENABLED: ${AI_WORKLOG_SEARCH_ENABLED:-true}
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN required}
       AI_WORKLOG_SEARCH_BASE_URL: http://ai:8200/ai
       AI_WORKLOG_SEARCH_CONNECT_TIMEOUT: ${AI_WORKLOG_SEARCH_CONNECT_TIMEOUT:-60s}
       AI_WORKLOG_SEARCH_READ_TIMEOUT: ${AI_WORKLOG_SEARCH_READ_TIMEOUT:-180s}
@@ -165,6 +166,7 @@ services:
       LIGHTRAG_QDRANT_API_KEY: ${LIGHTRAG_QDRANT_API_KEY:-}
       LIGHTRAG_QUERY_TIMEOUT_SECONDS: ${LIGHTRAG_QUERY_TIMEOUT_SECONDS:-120}
       API_BASE_URL: http://api:8100
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN required}
       # ai 가 api 를 호출할 때 쓰는 JWT 검증 키. api 와 동일 시크릿이어야 한다.
       JWT_SECRET: ${JWT_SECRET}
       # Gemini — 실제 키는 서버 .env / GitLab Variables 로만 주입한다 (ADR-003 / GEN-002).
@@ -213,6 +215,7 @@ services:
       LIGHTRAG_QDRANT_URL: http://qdrant:6333
       LIGHTRAG_QDRANT_API_KEY: ${LIGHTRAG_QDRANT_API_KEY:-}
       API_BASE_URL: http://api:8100
+      AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN required}
       JWT_SECRET: ${JWT_SECRET}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_API_KEYS: ${GEMINI_API_KEYS:-}
