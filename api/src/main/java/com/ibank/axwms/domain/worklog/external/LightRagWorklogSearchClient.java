@@ -24,10 +24,12 @@ public class LightRagWorklogSearchClient {
 
     private final RestClient restClient;
     private final String baseUrl;
+    private final String internalToken;
 
     /** 업무일지 시맨틱 검색 설정값으로 LightRAG v3 전용 RestClient를 구성한다. */
     public LightRagWorklogSearchClient(AiWorklogSearchProperties properties) {
         this.baseUrl = properties.baseUrl();
+        this.internalToken = properties.internalToken();
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory(properties))
@@ -38,10 +40,14 @@ public class LightRagWorklogSearchClient {
     public InternalLightRagWorklogQueryApiDto.Response queryWorklogs(
             InternalLightRagWorklogQueryApiDto.Request request
     ) {
+        if (internalToken == null || internalToken.isBlank()) {
+            throw new BusinessException(ErrorCode.WORKLOG_SEMANTIC_SEARCH_FAILED);
+        }
         long startedAtNanos = System.nanoTime();
         try {
             InternalLightRagWorklogQueryApiDto.Response response = restClient.post()
                     .uri(QUERY_WORKLOGS_PATH)
+                    .header("X-AI-Internal-Token", internalToken)
                     .body(request)
                     .retrieve()
                     .body(InternalLightRagWorklogQueryApiDto.Response.class);

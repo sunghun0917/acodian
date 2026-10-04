@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
@@ -44,9 +45,34 @@ class LightRagWorklogSearchClientTest {
     @Test
     @DisplayName("시맨틱 검색 기본 read timeout은 AI LightRAG query timeout보다 길다")
     void 시맨틱_검색_기본_read_timeout은_AI_LightRAG_query_timeout보다_길다() {
-        AiWorklogSearchProperties properties = new AiWorklogSearchProperties(true, null, null, null);
+        AiWorklogSearchProperties properties = new AiWorklogSearchProperties(true, null, null, null, null);
 
         assertThat(properties.readTimeout()).isEqualTo(Duration.ofSeconds(180));
+    }
+
+    @Test
+    @DisplayName("내부 토큰이 없으면 AI 호출 전에 실패한다")
+    void 내부_토큰이_없으면_AI_호출_전에_실패한다() throws Exception {
+        startServer(exchange -> respondJson(exchange, 200, "{\"answer\":\"unsafe\",\"references\":[],\"mode\":\"mix\",\"internalOnly\":true}"));
+        LightRagWorklogSearchClient client = client(Duration.ofSeconds(1), null);
+
+        Throwable thrown = catchThrowable(() -> client.queryWorklogs(request()));
+
+        assertThat(thrown).isInstanceOf(BusinessException.class);
+        assertThat(((BusinessException) thrown).getErrorCode()).isEqualTo(ErrorCode.WORKLOG_SEMANTIC_SEARCH_FAILED);
+    }
+
+    @Test
+    @DisplayName("LightRAG query에 내부 토큰 헤더를 전달한다")
+    void LightRAG_query에_내부_토큰_헤더를_전달한다() throws Exception {
+        AtomicReference<String> receivedToken = new AtomicReference<>();
+        startServer(exchange -> {
+            receivedToken.set(exchange.getRequestHeaders().getFirst("X-AI-Internal-Token"));
+            respondJson(exchange, 200, "{\"answer\":\"ok\",\"references\":[],\"mode\":\"mix\",\"internalOnly\":true}");
+        });
+
+        assertThat(client(Duration.ofSeconds(1)).queryWorklogs(request()).answer()).isEqualTo("ok");
+        assertThat(receivedToken.get()).isEqualTo("test-internal-token");
     }
 
     @Test
@@ -129,11 +155,17 @@ class LightRagWorklogSearchClientTest {
 
     /** 테스트 서버 주소와 요청별 read timeout을 주입한 실제 client를 만든다. */
     private LightRagWorklogSearchClient client(Duration readTimeout) {
+        return client(readTimeout, "test-internal-token");
+    }
+
+    /** 내부 토큰 누락 실패와 정상 전달을 같은 HTTP 클라이언트 경로에서 검증한다. */
+    private LightRagWorklogSearchClient client(Duration readTimeout, String internalToken) {
         return new LightRagWorklogSearchClient(new AiWorklogSearchProperties(
                 true,
                 baseUrl,
                 Duration.ofSeconds(1),
-                readTimeout
+                readTimeout,
+                internalToken
         ));
     }
 
