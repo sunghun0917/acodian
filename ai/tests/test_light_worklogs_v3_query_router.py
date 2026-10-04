@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from app.config.settings import Settings
 from app.light.v3.model.worklog_query import (
     WorklogLightQueryResponse,
     WorklogLightReferenceItem,
@@ -51,13 +52,45 @@ def install_fake_service(monkeypatch, service: FakeQueryService) -> None:
     from app.light.v3.router import worklog_query
 
     monkeypatch.setattr(worklog_query, "worklog_query_service", service)
+    monkeypatch.setattr(
+        worklog_query, "settings", Settings(_env_file=None, ai_internal_token="test-token"),
+        raising=False,
+    )
 
 
 def post_query(payload: dict[str, Any] | None = None):
     return client.post(
         "/ai/light/worklogs-v3/query",
-        json=payload or {"query": "업무일지 요약"},
+        json=({"query": "업무일지 요약", "allowedTeamIds": None}
+              if payload is None else {"allowedTeamIds": None, **payload}),
+        headers={"X-AI-Internal-Token": "test-token"},
     )
+
+
+def test_light_worklogs_v3_query_rejects_missing_internal_token(monkeypatch) -> None:
+    service = FakeQueryService()
+    install_fake_service(monkeypatch, service)
+
+    response = client.post(
+        "/ai/light/worklogs-v3/query",
+        json={"query": "ok", "allowedTeamIds": [101]},
+    )
+
+    assert response.status_code == 403
+    assert service.calls == []
+
+
+def test_light_worklogs_v3_query_rejects_missing_allowed_team_ids(monkeypatch) -> None:
+    service = FakeQueryService()
+    install_fake_service(monkeypatch, service)
+
+    response = client.post(
+        "/ai/light/worklogs-v3/query",
+        json={"query": "ok"}, headers={"X-AI-Internal-Token": "test-token"},
+    )
+
+    assert response.status_code == 422
+    assert service.calls == []
 
 
 def test_light_worklogs_v3_query_contract(monkeypatch) -> None:
@@ -191,7 +224,8 @@ def test_light_worklogs_v3_query_stream_success(monkeypatch) -> None:
 
     response = client.post(
         "/ai/light/worklogs-v3/query/stream",
-        json={"query": "요약해줘"},
+        json={"query": "요약해줘", "allowedTeamIds": None},
+        headers={"X-AI-Internal-Token": "test-token"},
     )
 
     assert response.status_code == 200
@@ -205,7 +239,8 @@ def test_light_worklogs_v3_query_stream_timeout(monkeypatch) -> None:
 
     response = client.post(
         "/ai/light/worklogs-v3/query/stream",
-        json={"query": "요약해줘"},
+        json={"query": "요약해줘", "allowedTeamIds": None},
+        headers={"X-AI-Internal-Token": "test-token"},
     )
 
     assert response.status_code == 200

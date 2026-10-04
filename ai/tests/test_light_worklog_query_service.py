@@ -42,7 +42,7 @@ class FakeAdapter:
 
 
 def make_request(**overrides: Any) -> WorklogLightQueryRequest:
-    payload = {"query": "업무일지 요약", **overrides}
+    payload = {"query": "업무일지 요약", "allowedTeamIds": None, **overrides}
     return WorklogLightQueryRequest.model_validate(payload)
 
 
@@ -115,7 +115,7 @@ def test_query_service_passes_rerank_model_override() -> None:
     assert adapter.calls[0].rerank_model == "BAAI/custom-reranker"
 
 
-def test_query_service_omits_allowed_team_ids_from_system_prompt() -> None:
+def test_query_service_empty_allowed_team_ids_skips_adapter() -> None:
     adapter = FakeAdapter(
         {
             "llm_response": {"content": "answer"},
@@ -127,35 +127,11 @@ def test_query_service_omits_allowed_team_ids_from_system_prompt() -> None:
         adapter_factory=lambda: adapter,
     )
 
-    asyncio.run(service.query_worklogs(make_request(allowedTeamIds=[106])))
+    response = asyncio.run(service.query_worklogs(make_request(allowedTeamIds=[])))
 
-    assert len(adapter.calls) == 1
-    assert adapter.calls[0].system_prompt is not None
-    assert "allowedTeamIds" not in adapter.calls[0].system_prompt
-    assert "teamId" not in adapter.calls[0].system_prompt
-    assert "https://k14s209.p.ssafy.io:8443/worklog/detail/<worklog_id>" in (
-        adapter.calls[0].system_prompt
-    )
-
-
-def test_query_service_does_not_treat_empty_allowed_team_ids_as_prompt_restriction() -> None:
-    adapter = FakeAdapter(
-        {
-            "llm_response": {"content": "answer"},
-            "data": {"references": []},
-        }
-    )
-    service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None),
-        adapter_factory=lambda: adapter,
-    )
-
-    asyncio.run(service.query_worklogs(make_request(allowedTeamIds=[])))
-
-    assert len(adapter.calls) == 1
-    assert adapter.calls[0].system_prompt is not None
-    assert "allowedTeamIds" not in adapter.calls[0].system_prompt
-    assert "no teams are permitted" not in adapter.calls[0].system_prompt
+    assert response.answer == ""
+    assert response.references == []
+    assert adapter.calls == []
 
 
 def test_query_service_does_not_add_all_scope_for_null_allowed_team_ids() -> None:
@@ -289,4 +265,3 @@ def test_query_service_stream_rejects_non_async_iterator() -> None:
 
     with pytest.raises(LightRagQueryFailedError, match="invalid response iterator"):
         asyncio.run(collect())
-

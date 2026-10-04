@@ -206,6 +206,55 @@ class LightRagWorklogIndexAdapter:
         except Exception as exc:
             raise LightRagQueryFailedError("LightRAG query failed") from exc
 
+    async def query_data(self, options: LightRagQueryOptions) -> dict[str, Any]:
+        """LLM 응답 생성 없이 LightRAG 검색 후보만 회수한다."""
+        try:
+            rag = await self._get_initialized_rag()
+            data = await asyncio.wait_for(
+                rag.aquery_data(options.query, param=self._build_query_param(options)),
+                timeout=self._settings.lightrag_query_timeout_seconds,
+            )
+            if not isinstance(data, dict):
+                raise LightRagQueryFailedError("LightRAG query returned invalid retrieval data")
+            return data
+        except (LightRagConfigurationError, LightRagProviderUnavailableError, LightRagQueryFailedError):
+            raise
+        except TimeoutError as exc:
+            raise LightRagQueryTimeoutError("LightRAG retrieval timed out") from exc
+        except Exception as exc:
+            raise LightRagQueryFailedError("LightRAG retrieval failed") from exc
+
+    async def complete_scoped(
+        self, query: str, *, system_prompt: str, stream: bool = False
+    ) -> Any:
+        """권한 확인을 마친 문맥으로만 Gemini 답변을 생성한다."""
+        try:
+            rag = await self._get_initialized_rag()
+            return await asyncio.wait_for(
+                rag.llm_model_func(query, system_prompt=system_prompt, stream=stream),
+                timeout=self._settings.lightrag_query_timeout_seconds,
+            )
+        except LightRagProviderUnavailableError:
+            raise
+        except TimeoutError as exc:
+            raise LightRagQueryTimeoutError("LightRAG generation timed out") from exc
+        except Exception as exc:
+            raise LightRagQueryFailedError("LightRAG generation failed") from exc
+
+    async def embed_query(self, query: str) -> list[float]:
+        """현재 LightRAG embedding 모델로 캐시 검색용 query vector를 만든다."""
+        try:
+            rag = await self._get_initialized_rag()
+            vectors = await rag.embedding_func([query])
+            vector = vectors[0]
+            if len(vector) != self._settings.embedding_dim:
+                raise ValueError("LightRAG embedding dimension mismatch")
+            return list(vector)
+        except LightRagProviderUnavailableError:
+            raise
+        except Exception as exc:
+            raise LightRagQueryFailedError("LightRAG query embedding failed") from exc
+
     async def query_worklogs_stream(
         self, options: LightRagQueryOptions
     ) -> tuple[Any, Any]:
