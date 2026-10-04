@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8080"           # api 서비스 호출 기본 URL
     pgvector_dsn: str = "postgresql://postgres:postgres@localhost:5432/axwms"
     redis_url: str = "redis://localhost:6379/0"           # Celery broker / 캐시
+    ai_internal_token: str = ""                            # API→AI 업무일지 query 내부 인증 토큰
     celery_broker_url: str | None = None                  # 미지정 시 redis_url 사용
     celery_result_backend: str | None = None              # 미지정 시 redis_url 사용
     celery_task_always_eager: bool = False                # 테스트용 동기 실행 플래그

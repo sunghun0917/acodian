@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 
 class WorklogLightQueryRequest(BaseModel):
@@ -17,7 +17,7 @@ class WorklogLightQueryRequest(BaseModel):
     rerank_model: str | None = Field(
         default=None, alias="rerankModel", min_length=1, max_length=200
     )
-    allowed_team_ids: list[int] | None = Field(default=None, alias="allowedTeamIds")
+    allowed_team_ids: list[PositiveInt] | None = Field(alias="allowedTeamIds")
 
 
 class WorklogLightReferenceItem(BaseModel):
