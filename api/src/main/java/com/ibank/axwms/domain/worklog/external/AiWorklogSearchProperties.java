@@ -12,7 +12,8 @@ public record AiWorklogSearchProperties(
         boolean enabled,
         String baseUrl,
         Duration connectTimeout,
-        Duration readTimeout
+        Duration readTimeout,
+        String internalToken
 ) {
 
     private static final String DEFAULT_BASE_URL = "http://localhost:8000/ai";

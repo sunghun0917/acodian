@@ -105,7 +105,8 @@ class LightRagWorklogSearchServiceTest {
                         enabled,
                         "http://localhost:8000/ai",
                         Duration.ofSeconds(1),
-                        Duration.ofSeconds(120))
+                        Duration.ofSeconds(120),
+                        "test-internal-token")
         );
     }
 
