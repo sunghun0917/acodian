@@ -34,6 +34,7 @@ Thumbs.db
 !.env.*.example
 /ai/data/
 /ai/data/lightrag-v3*/
+/data/
 *.log
 *.tmp
 *.swp
