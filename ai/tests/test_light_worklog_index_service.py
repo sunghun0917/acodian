@@ -123,3 +123,86 @@ def test_index_service_maps_text_batch_failure_to_all_found_ids(monkeypatch) -> 
         ]
 
     asyncio.run(run_case())
+
+
+def test_reindex_service_deletes_first_and_bumps_cache_version(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class _Reader:
+        async def fetch_source_rows(self, worklog_ids: list[int]):
+            return {101: make_source_row(101)}
+
+    class _Adapter:
+        async def delete_document(self, document_id: str) -> None:
+            calls.append(f"delete:{document_id}")
+
+        async def index_documents(self, documents) -> None:
+            calls.append(f"index_docs:{[d.document_id for d in documents]}")
+
+        async def index_custom_kg_documents(self, documents) -> None:
+            calls.append(f"index_kg:{[d.document_id for d in documents]}")
+
+    class _FakeCache:
+        def __init__(self) -> None:
+            self.bump_count = 0
+
+        async def bump_version(self) -> int:
+            self.bump_count += 1
+            calls.append("bump_version")
+            return 2
+
+    async def run_case() -> None:
+        adapter = _Adapter()
+        cache = _FakeCache()
+        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
+        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
+
+        service = LightWorklogIndexService(cache=cache)  # type: ignore
+        response = await service.reindex_worklogs([101])
+
+        assert calls == [
+            "delete:worklog-101",
+            "index_docs:['worklog-101']",
+            "index_kg:['worklog-101']",
+            "bump_version",
+        ]
+        assert [item.model_dump(by_alias=True) for item in response.items] == [
+            {"worklogId": 101, "indexed": True, "error": None}
+        ]
+        assert cache.bump_count == 1
+
+    asyncio.run(run_case())
+
+
+def test_delete_service_deletes_documents_and_bumps_cache_version(monkeypatch) -> None:
+    deleted_ids: list[str] = []
+
+    class _Adapter:
+        async def delete_document(self, document_id: str) -> None:
+            deleted_ids.append(document_id)
+
+    class _FakeCache:
+        def __init__(self) -> None:
+            self.bump_count = 0
+
+        async def bump_version(self) -> int:
+            self.bump_count += 1
+            return 3
+
+    async def run_case() -> None:
+        adapter = _Adapter()
+        cache = _FakeCache()
+        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
+
+        service = LightWorklogIndexService(cache=cache)  # type: ignore
+        response = await service.delete_worklogs([101, 102])
+
+        assert deleted_ids == ["worklog-101", "worklog-102"]
+        assert [item.model_dump(by_alias=True) for item in response.items] == [
+            {"worklogId": 101, "deleted": True, "error": None},
+            {"worklogId": 102, "deleted": True, "error": None},
+        ]
+        assert cache.bump_count == 1
+
+    asyncio.run(run_case())
+

@@ -159,6 +159,7 @@ def test_settings_accepts_lightrag_query_env_override(monkeypatch) -> None:
 
 def test_settings_has_lightrag_llm_fallback_retry_defaults(monkeypatch) -> None:
     """LightRAG query LLM은 기본적으로 downgrade fallback 없이 retry 정책만 제공해야 한다."""
+    monkeypatch.delenv("LIGHTRAG_LLM_MODEL", raising=False)
     monkeypatch.delenv("LIGHTRAG_LLM_FALLBACK_MODELS", raising=False)
     monkeypatch.delenv("LIGHTRAG_QUERY_LLM_MAX_RETRIES_PER_MODEL", raising=False)
     monkeypatch.delenv("LIGHTRAG_QUERY_LLM_RETRY_INITIAL_DELAY_SECONDS", raising=False)
@@ -176,6 +177,7 @@ def test_settings_has_lightrag_llm_fallback_retry_defaults(monkeypatch) -> None:
 
 def test_settings_keeps_lightrag_primary_only_when_fallback_env_is_blank(monkeypatch) -> None:
     """env 값이 빈 문자열이면 lower-model fallback 없이 primary만 사용해야 한다."""
+    monkeypatch.delenv("LIGHTRAG_LLM_MODEL", raising=False)
     monkeypatch.setenv("LIGHTRAG_LLM_FALLBACK_MODELS", "")
 
     settings = Settings(_env_file=None)

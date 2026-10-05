@@ -26,6 +26,7 @@ COPY alembic.ini ./
 
 # non-root user (ADR-016 — DO-005 와 동일 정책)
 RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app \
+ && mkdir -p /app/data/lightrag-v3 \
  && chown -R app:app /app
 USER app
 

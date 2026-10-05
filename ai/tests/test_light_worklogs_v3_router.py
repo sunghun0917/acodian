@@ -1,6 +1,8 @@
 from fastapi.testclient import TestClient
 
 from app.light.v3.model.worklog_index import (
+    WorklogLightDeleteItem,
+    WorklogLightDeleteResponse,
     WorklogLightIndexItem,
     WorklogLightIndexResponse,
 )
@@ -191,3 +193,91 @@ def test_light_worklogs_v3_custom_kg_index_endpoint_removed() -> None:
     )
 
     assert response.status_code == 404
+
+
+def test_light_worklogs_v3_delete_requires_internal_token(monkeypatch) -> None:
+    from app.light.v3.router import worklog_index
+
+    monkeypatch.setattr(worklog_index.settings, "ai_internal_token", "test-internal-token")
+    response = client.post(
+        "/ai/light/worklogs-v3/delete", json={"worklogIds": [101]}
+    )
+    assert response.status_code == 403
+    assert response.json() == {"detail": "AI_INTERNAL_ACCESS_DENIED"}
+
+
+def test_light_worklogs_v3_delete_contract(monkeypatch) -> None:
+    from app.light.v3.router import worklog_index
+
+    async def fake_delete_worklogs(worklog_ids: list[int]) -> WorklogLightDeleteResponse:
+        assert worklog_ids == [101]
+        return WorklogLightDeleteResponse(
+            items=[WorklogLightDeleteItem(worklogId=101, deleted=True)]
+        )
+
+    monkeypatch.setattr(worklog_index.settings, "ai_internal_token", "test-internal-token")
+    monkeypatch.setattr(
+        worklog_index.worklog_index_service,
+        "delete_worklogs",
+        fake_delete_worklogs,
+        raising=False,
+    )
+    response = client.post(
+        "/ai/light/worklogs-v3/delete",
+        json={"worklogIds": [101]},
+        headers={"X-AI-Internal-Token": "test-internal-token"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{"worklogId": 101, "deleted": True, "error": None}]
+    }
+
+
+def test_light_worklogs_v3_delete_rejects_extra_fields(monkeypatch) -> None:
+    from app.light.v3.router import worklog_index
+
+    monkeypatch.setattr(worklog_index.settings, "ai_internal_token", "test-internal-token")
+    response = client.post(
+        "/ai/light/worklogs-v3/delete",
+        json={"worklogIds": [101], "force": True},
+        headers={"X-AI-Internal-Token": "test-internal-token"},
+    )
+    assert response.status_code == 422
+
+
+def test_light_worklogs_v3_reindex_requires_internal_token(monkeypatch) -> None:
+    from app.light.v3.router import worklog_index
+
+    monkeypatch.setattr(worklog_index.settings, "ai_internal_token", "test-internal-token")
+    response = client.post(
+        "/ai/light/worklogs-v3/reindex", json={"worklogIds": [101]}
+    )
+    assert response.status_code == 403
+
+
+def test_light_worklogs_v3_reindex_contract(monkeypatch) -> None:
+    from app.light.v3.router import worklog_index
+
+    async def fake_reindex_worklogs(worklog_ids: list[int]) -> WorklogLightIndexResponse:
+        assert worklog_ids == [101]
+        return WorklogLightIndexResponse(
+            items=[WorklogLightIndexItem(worklogId=101, indexed=True)]
+        )
+
+    monkeypatch.setattr(worklog_index.settings, "ai_internal_token", "test-internal-token")
+    monkeypatch.setattr(
+        worklog_index.worklog_index_service,
+        "reindex_worklogs",
+        fake_reindex_worklogs,
+        raising=False,
+    )
+    response = client.post(
+        "/ai/light/worklogs-v3/reindex",
+        json={"worklogIds": [101]},
+        headers={"X-AI-Internal-Token": "test-internal-token"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{"worklogId": 101, "indexed": True, "error": None}]
+    }
+

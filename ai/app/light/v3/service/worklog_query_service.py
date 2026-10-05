@@ -85,10 +85,17 @@ class LightWorklogQueryService:
             embedding_model=self._settings.embedding_model,
         )
 
-        # 1. Exact Cache Check
+        version = None
         if self._cache is not None:
             try:
-                exact_hit = await self._cache.get_exact(scope, signature)
+                version = await self._cache.get_version()
+            except Exception:
+                pass
+
+        # 1. Exact Cache Check
+        if version is not None:
+            try:
+                exact_hit = await self._cache.get_exact(scope, signature, version)
                 if exact_hit is not None:
                     return exact_hit
             except Exception:
@@ -96,11 +103,11 @@ class LightWorklogQueryService:
 
         # 2. Semantic Cache Check
         embedding = None
-        if self._cache is not None:
+        if version is not None:
             try:
                 embedding = await self._get_embedding(request.query)
                 if embedding is not None:
-                    semantic_hit = await self._cache.get_semantic(scope, embedding)
+                    semantic_hit = await self._cache.get_semantic(scope, embedding, version)
                     if semantic_hit is not None:
                         return semantic_hit
             except Exception:
@@ -129,12 +136,12 @@ class LightWorklogQueryService:
             )
 
         # 3. Put into Cache
-        if self._cache is not None:
+        if version is not None:
             try:
                 if embedding is None:
                     embedding = await self._get_embedding(request.query)
                 if embedding is not None:
-                    await self._cache.put(scope, signature, embedding, response)
+                    await self._cache.put(scope, signature, embedding, version, response)
             except Exception:
                 pass
 
