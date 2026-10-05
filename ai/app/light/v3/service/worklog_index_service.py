@@ -1,13 +1,16 @@
-"""LightRAG v3 업무일지 통합 index orchestration service 경계."""
-
 from dataclasses import dataclass
 
+from app.config.settings import settings
 from app.light.v3.model.worklog_index import (
+    WorklogLightDeleteItem,
+    WorklogLightDeleteResponse,
     WorklogLightIndexItem,
     WorklogLightIndexResponse,
 )
 from app.light.v3.service.lightrag_adapter import (
     LightRagConfigurationError,
+    LightRagDeleteFailedError,
+    LightRagDeleteTimeoutError,
     LightRagInsertFailedError,
     LightRagInsertTimeoutError,
     get_lightrag_worklog_index_adapter,
@@ -25,10 +28,13 @@ from app.light.v3.service.worklog_custom_kg_source_reader import (
 )
 from app.light.v3.service.worklog_source_reader import to_light_worklog_source
 from app.light.v3.service.worklog_source_row_reader import WorklogLightSourceRowReader
+from app.light.v3.service.worklog_query_cache import WorklogQueryCache
 
 ERROR_WORKLOG_NOT_FOUND = "WORKLOG_NOT_FOUND"
 ERROR_LIGHTRAG_INSERT_TIMEOUT = "LIGHTRAG_INSERT_TIMEOUT"
 ERROR_LIGHTRAG_INSERT_FAILED = "LIGHTRAG_INSERT_FAILED"
+ERROR_LIGHTRAG_DELETE_TIMEOUT = "LIGHTRAG_DELETE_TIMEOUT"
+ERROR_LIGHTRAG_DELETE_FAILED = "LIGHTRAG_DELETE_FAILED"
 
 
 @dataclass(frozen=True)
@@ -47,6 +53,10 @@ class LightWorklogIndexService:
     한 번의 source reader 호출 결과에서 text document와 confirmed relation custom KG
     document를 함께 만들고, 둘 다 성공한 업무일지만 index 성공으로 응답한다.
     """
+
+    def __init__(self, *, cache: WorklogQueryCache | None = None) -> None:
+        """인덱싱/재색인/삭제 후 캐시 무효화에 사용할 Redis 캐시를 구성한다."""
+        self._cache = cache or WorklogQueryCache(settings_obj=settings)
 
     async def prepare_documents(self, worklog_ids: list[int]) -> PreparedLightWorklogDocuments:
         """업무일지 ID 목록을 LightRAG text/custom KG 문서와 missing ID 목록으로 나눈다."""
@@ -81,6 +91,8 @@ class LightWorklogIndexService:
 
         missing_worklog_ids = set(prepared.missing_worklog_ids)
         indexed_worklog_ids = set(prepared.found_worklog_ids) - set(failed_found_ids)
+        if indexed_worklog_ids:
+            await self._cache.bump_version()
 
         return WorklogLightIndexResponse(
             items=[
@@ -93,6 +105,50 @@ class LightWorklogIndexService:
                 for worklog_id in worklog_ids
             ]
         )
+
+    async def reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
+        """기존 인덱스를 단일 문서 단위로 삭제 후 최신 DB 내용으로 재색인한다."""
+        adapter = get_lightrag_worklog_index_adapter()
+        for worklog_id in worklog_ids:
+            try:
+                await adapter.delete_document(f"worklog-{worklog_id}")
+            except (LightRagDeleteTimeoutError, LightRagDeleteFailedError):
+                pass
+            except LightRagConfigurationError:
+                raise
+
+        return await self.index_worklogs(worklog_ids)
+
+    async def delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteResponse:
+        """요청된 업무일지 문서를 LightRAG에서 삭제하고 캐시 버전을 증가시킨다."""
+        adapter = get_lightrag_worklog_index_adapter()
+        items: list[WorklogLightDeleteItem] = []
+        any_success = False
+
+        for worklog_id in worklog_ids:
+            try:
+                await adapter.delete_document(f"worklog-{worklog_id}")
+                items.append(WorklogLightDeleteItem(worklogId=worklog_id, deleted=True))
+                any_success = True
+            except LightRagConfigurationError:
+                raise
+            except LightRagDeleteTimeoutError:
+                items.append(
+                    WorklogLightDeleteItem(
+                        worklogId=worklog_id, deleted=False, error=ERROR_LIGHTRAG_DELETE_TIMEOUT
+                    )
+                )
+            except LightRagDeleteFailedError:
+                items.append(
+                    WorklogLightDeleteItem(
+                        worklogId=worklog_id, deleted=False, error=ERROR_LIGHTRAG_DELETE_FAILED
+                    )
+                )
+
+        if any_success:
+            await self._cache.bump_version()
+
+        return WorklogLightDeleteResponse(items=items)
 
     async def _index_found_documents(
         self,

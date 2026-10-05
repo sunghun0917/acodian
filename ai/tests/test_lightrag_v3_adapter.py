@@ -38,6 +38,7 @@ def make_settings() -> Settings:
         neo4j_uri="bolt://localhost:7687",
         neo4j_user="neo4j",
         neo4j_password="fake-neo4j-password",
+        lightrag_llm_model="gemini-2.5-flash",
     )
 
 
@@ -112,6 +113,10 @@ class FakeLightRAG:
 
     async def ainsert_custom_kg(self, custom_kg: dict[str, Any], *, full_doc_id: str) -> None:
         self.calls.append(("ainsert_custom_kg", custom_kg, full_doc_id))
+
+    async def adelete_by_doc_id(self, doc_id: str) -> Any:
+        self.calls.append(("adelete_by_doc_id", doc_id))
+        return {"status": "success", "doc_id": doc_id}
 
     async def finalize_storages(self) -> None:
         self.calls.append("finalize_storages")
@@ -1174,3 +1179,17 @@ def test_lightrag_adapter_query_preserves_provider_unavailable_error() -> None:
 
     with pytest.raises(LightRagProviderUnavailableError):
         asyncio.run(adapter.query_worklogs(make_query_options()))
+
+
+def test_lightrag_adapter_delete_document_calls_adelete_by_doc_id() -> None:
+    FakeLightRAG.instances = []
+    dependencies, _, _, _ = make_dependencies()
+    adapter = LightRagWorklogIndexAdapter(settings_obj=make_settings(), dependencies=dependencies)
+
+    async def run_case() -> None:
+        await adapter.delete_document("worklog-101")
+        assert len(FakeLightRAG.instances) == 1
+        assert ("adelete_by_doc_id", "worklog-101") in FakeLightRAG.instances[0].calls
+
+    asyncio.run(run_case())
+

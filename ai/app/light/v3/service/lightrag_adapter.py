@@ -44,6 +44,14 @@ class LightRagInsertFailedError(RuntimeError):
     """LightRAG document insert 또는 storage 초기화가 실패했음을 나타내는 예외."""
 
 
+class LightRagDeleteTimeoutError(RuntimeError):
+    """LightRAG document delete가 설정된 제한 시간을 초과했음을 나타내는 예외."""
+
+
+class LightRagDeleteFailedError(RuntimeError):
+    """LightRAG document delete가 실패했음을 나타내는 예외."""
+
+
 class LightRagQueryTimeoutError(RuntimeError):
     """LightRAG query가 설정된 제한 시간을 초과했음을 나타내는 예외."""
 
@@ -66,6 +74,9 @@ class WorklogLightIndexAdapter(Protocol):
         self, documents: list[LightRagWorklogCustomKgDocument]
     ) -> None:
         """업무일지 확정 관계 custom KG document 목록을 LightRAG에 insert한다."""
+
+    async def delete_document(self, document_id: str) -> None:
+        """단일 업무일지 문서를 LightRAG에서 삭제한다."""
 
 
 @dataclass(frozen=True)
@@ -172,6 +183,28 @@ class LightRagWorklogIndexAdapter:
             raise LightRagInsertTimeoutError("LightRAG custom KG insert timed out") from exc
         except Exception as exc:
             raise LightRagInsertFailedError("LightRAG custom KG insert failed") from exc
+
+    async def delete_document(self, document_id: str) -> None:
+        """단일 업무일지 문서를 LightRAG에서 삭제한다.
+
+        `adelete_by_doc_id`를 호출하여 문서의 doc_status JSON 상태, Qdrant 청크 벡터,
+        Neo4j 노드/관계 중 해당 문서 전용 참조를 삭제한다.
+        """
+        if not document_id:
+            return
+
+        try:
+            rag = await self._get_initialized_rag()
+            await asyncio.wait_for(
+                rag.adelete_by_doc_id(document_id),
+                timeout=self._settings.lightrag_insert_timeout_seconds,
+            )
+        except LightRagConfigurationError:
+            raise
+        except TimeoutError as exc:
+            raise LightRagDeleteTimeoutError("LightRAG document delete timed out") from exc
+        except Exception as exc:
+            raise LightRagDeleteFailedError(f"LightRAG document delete failed: {exc}") from exc
 
     async def query_worklogs(self, options: LightRagQueryOptions) -> LightRagQueryResult:
         """LightRAG `mode="mix"` query를 실행하고 raw 결과를 반환한다."""

@@ -86,6 +86,73 @@ def test_query_service_applies_settings_defaults_and_normalizes_reference() -> N
     assert response.internal_only is True
 
 
+def test_query_service_uses_one_version_snapshot_for_read_and_write() -> None:
+    class Cache:
+        version = 0
+
+        def __init__(self):
+            self.values = {}
+            self.read_versions = []
+            self.write_versions = []
+
+        async def get_version(self):
+            return self.version
+
+        async def get_exact(self, scope, signature, version):
+            self.read_versions.append(version)
+            return self.values.get((version, scope, signature))
+
+        async def get_semantic(self, scope, embedding, version):
+            self.read_versions.append(version)
+            return None
+
+        async def put(self, scope, signature, embedding, version, response):
+            self.write_versions.append(version)
+            self.values[(version, scope, signature)] = response
+
+    adapter = FakeAdapter({"llm_response": {"content": "answer"}, "data": {"references": []}})
+    cache = Cache()
+    service = LightWorklogQueryService(
+        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        cache=cache, embedder=lambda _: asyncio.sleep(0, result=[0.1] * 768),
+    )
+
+    async def run_case():
+        first = await service.query_worklogs(make_request())
+        assert await service.query_worklogs(make_request()) == first
+        assert len(adapter.calls) == 1
+        cache.version = 1
+        assert await service.query_worklogs(make_request()) == first
+        assert len(adapter.calls) == 2
+        assert cache.read_versions == [0, 0, 0, 1, 1]
+        assert cache.write_versions == [0, 1]
+
+    asyncio.run(run_case())
+
+
+def test_query_service_skips_cache_when_version_read_fails() -> None:
+    class BrokenCache:
+        async def get_version(self):
+            raise ConnectionError("Redis down")
+
+        async def get_exact(self, *args):
+            raise AssertionError("cache must be bypassed")
+
+        async def get_semantic(self, *args):
+            raise AssertionError("cache must be bypassed")
+
+        async def put(self, *args):
+            raise AssertionError("cache must be bypassed")
+
+    adapter = FakeAdapter({"llm_response": {"content": "answer"}, "data": {"references": []}})
+    service = LightWorklogQueryService(
+        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        cache=BrokenCache(),
+    )
+    assert asyncio.run(service.query_worklogs(make_request())).answer == "answer"
+    assert len(adapter.calls) == 1
+
+
 def test_query_service_enables_rerank_per_query() -> None:
     adapter = FakeAdapter(
         {"llm_response": {"content": "answer"}, "data": {"references": []}}

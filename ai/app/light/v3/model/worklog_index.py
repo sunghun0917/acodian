@@ -36,3 +36,31 @@ class WorklogLightIndexResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     items: list[WorklogLightIndexItem]
+
+
+class WorklogLightDeleteRequest(BaseModel):
+    """POST /ai/light/worklogs-v3/delete 요청."""
+
+    model_config = ConfigDict(extra="forbid", validate_by_alias=True, validate_by_name=False)
+
+    worklog_ids: list[PositiveInt] = Field(
+        alias="worklogIds",
+        min_length=1,
+        max_length=DEFAULT_LIGHTRAG_INDEX_MAX_BATCH_SIZE,
+    )
+
+
+class WorklogLightDeleteItem(BaseModel):
+    """업무일지 1건의 저장소 삭제 결과."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    worklog_id: int = Field(alias="worklogId")
+    deleted: bool
+    error: str | None = None
+
+
+class WorklogLightDeleteResponse(BaseModel):
+    """업무일지 저장소 삭제 응답."""
+
+    items: list[WorklogLightDeleteItem]
