@@ -20,4 +20,12 @@ public final class TriggerWorklogLightIndexDto {
             return new Request(List.of(worklogId));
         }
     }
+
+    /** AI가 HTTP 성공과 별도로 각 업무의 색인 실패를 보고하므로 결과를 ID별로 확인한다. */
+    public record Response(List<Item> items) {
+    }
+
+    /** 각 ID의 indexed=false는 HTTP 성공과 관계없이 색인 실패를 뜻한다. */
+    public record Item(Long worklogId, boolean indexed, String error) {
+    }
 }

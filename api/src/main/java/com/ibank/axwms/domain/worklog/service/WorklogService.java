@@ -20,6 +20,9 @@ import com.ibank.axwms.domain.worklog.entity.Worklog;
 import com.ibank.axwms.domain.worklog.entity.WorklogTag;
 import com.ibank.axwms.domain.worklog.event.WorklogAiPostProcessRequestedEvent;
 import com.ibank.axwms.domain.worklog.event.WorklogCompletedEvent;
+import com.ibank.axwms.domain.worklog.event.WorklogLightIndexRequestedEvent;
+import com.ibank.axwms.domain.worklog.event.WorklogLightDeleteRequestedEvent;
+import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogPolishClient;
 import com.ibank.axwms.domain.worklog.policy.WorklogStatusPolicy;
 import com.ibank.axwms.domain.worklog.repository.WorklogDependencyRepository;
@@ -50,6 +53,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -72,6 +76,7 @@ public class WorklogService {
     private final TagService tagService;
     private final ApplicationEventPublisher eventPublisher;
     private final WorklogPolishClient worklogPolishClient;
+    private final AiWorklogLightIndexProperties worklogLightIndexProperties;
 
     /**
      * 인증된 작성 보조 요청의 초안을 AI 서버에 전달하고 저장 없이 다듬어진 본문만 반환한다.
@@ -307,6 +312,15 @@ public class WorklogService {
                               List<MultipartFile> newFiles) {
         Worklog worklog = getEditableWorklogOrThrow(principal, worklogId);
 
+        boolean updateIndexEnabled = worklogLightIndexProperties.enabled() && worklogLightIndexProperties.updateEnabled();
+        String oldTitle = updateIndexEnabled ? worklog.getTitle() : null;
+        String oldRequestContent = updateIndexEnabled ? worklog.getRequestContent() : null;
+        String oldWorkContent = updateIndexEnabled ? worklog.getWorkContent() : null;
+        Set<Long> oldTagIds = updateIndexEnabled ? worklogTagRepository.findByWorklogId(worklogId).stream()
+                .map(WorklogTag::getTagId).collect(Collectors.toSet()) : Set.of();
+        Set<Long> oldPredecessors = updateIndexEnabled
+                ? worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(worklogId) : Set.of();
+
         LocalDate effectiveInstructionDate = request.instructionDate() != null ? request.instructionDate() : worklog.getInstructionDate();
         LocalDate effectiveDueDate = request.dueDate() != null ? request.dueDate() : worklog.getDueDate();
         validateDateRange(effectiveInstructionDate, effectiveDueDate);
@@ -350,6 +364,33 @@ public class WorklogService {
         }
 
         fileService.uploadWorklogFiles(worklogId, principal.userId(), newFiles);
+
+        if (updateIndexEnabled) {
+            worklogTagRepository.flush();
+            worklogDependencyRepository.flush();
+            boolean indexInputChanged = !Objects.equals(oldTitle, worklog.getTitle())
+                    || !Objects.equals(oldRequestContent, worklog.getRequestContent())
+                    || !Objects.equals(oldWorkContent, worklog.getWorkContent())
+                    || !oldTagIds.equals(worklogTagRepository.findByWorklogId(worklogId).stream()
+                    .map(WorklogTag::getTagId).collect(Collectors.toSet()))
+                    || !oldPredecessors.equals(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(worklogId));
+            if (indexInputChanged) {
+                eventPublisher.publishEvent(new WorklogLightIndexRequestedEvent(worklogId));
+            }
+        }
+    }
+
+    /** 작성자 본인의 업무만 소프트 삭제하고 커밋 뒤 AI 문서 삭제를 요청한다. */
+    @Transactional
+    public void deleteWorklog(CustomUserPrincipal principal, Long worklogId) {
+        if (!worklogLightIndexProperties.enabled() || !worklogLightIndexProperties.deleteEnabled()
+                || worklogLightIndexProperties.internalToken() == null
+                || worklogLightIndexProperties.internalToken().isBlank()) {
+            throw new BusinessException(ErrorCode.WORKLOG_LIGHT_DELETE_UNAVAILABLE);
+        }
+        Worklog worklog = getEditableWorklogOrThrow(principal, worklogId);
+        worklog.softDelete();
+        eventPublisher.publishEvent(new WorklogLightDeleteRequestedEvent(worklogId));
     }
 
     /**

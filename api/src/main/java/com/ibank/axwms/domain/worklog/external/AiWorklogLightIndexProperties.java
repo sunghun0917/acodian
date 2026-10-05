@@ -10,9 +10,12 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "ai.worklog-light-index")
 public record AiWorklogLightIndexProperties(
         boolean enabled,
+        boolean updateEnabled,
+        boolean deleteEnabled,
         String baseUrl,
         Duration connectTimeout,
-        Duration readTimeout
+        Duration readTimeout,
+        String internalToken
 ) {
 
     private static final String DEFAULT_BASE_URL = "http://localhost:8000/ai";

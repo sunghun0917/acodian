@@ -23,6 +23,8 @@ import com.ibank.axwms.domain.worklog.event.WorklogAiPipelineRequestedEvent;
 import com.ibank.axwms.domain.worklog.event.WorklogAiPostProcessRequestedEvent;
 import com.ibank.axwms.domain.worklog.event.WorklogCompletedEvent;
 import com.ibank.axwms.domain.worklog.event.WorklogLightIndexRequestedEvent;
+import com.ibank.axwms.domain.worklog.event.WorklogLightDeleteRequestedEvent;
+import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogPolishClient;
 import com.ibank.axwms.domain.worklog.policy.WorklogStatusPolicy;
 import com.ibank.axwms.domain.worklog.repository.WorklogDependencyRepository;
@@ -86,6 +88,7 @@ class WorklogServiceTest {
     @Mock private TagService tagService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private WorklogPolishClient worklogPolishClient;
+    @Mock private AiWorklogLightIndexProperties worklogLightIndexProperties;
 
     @InjectMocks private WorklogService worklogService;
 
@@ -96,6 +99,44 @@ class WorklogServiceTest {
     private static final List<Long> TAG_IDS = List.of(1L, 2L);
     private static final LocalDate INSTRUCTION_DATE = LocalDate.of(2026, 4, 22);
     private static final LocalDate DUE_DATE = LocalDate.of(2026, 4, 25);
+
+    @Test
+    @DisplayName("AI 삭제가 준비되지 않으면 DB 삭제와 이벤트를 모두 차단한다")
+    void deleteWorklog_fails_closed_when_ai_delete_disabled() {
+        assertThatThrownBy(() -> worklogService.deleteWorklog(principal(), WORKLOG_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.WORKLOG_LIGHT_DELETE_UNAVAILABLE);
+        verifyNoInteractions(worklogRepository, eventPublisher);
+    }
+
+    @Test
+    @DisplayName("작성자 업무를 소프트 삭제하고 AI 삭제 이벤트를 발행한다")
+    void deleteWorklog_soft_deletes_and_publishes_event() {
+        given(worklogLightIndexProperties.enabled()).willReturn(true);
+        given(worklogLightIndexProperties.deleteEnabled()).willReturn(true);
+        given(worklogLightIndexProperties.internalToken()).willReturn("test-token");
+        Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
+
+        worklogService.deleteWorklog(principal(), WORKLOG_ID);
+
+        assertThat(worklog.getIsDeleted()).isTrue();
+        verify(eventPublisher).publishEvent(new WorklogLightDeleteRequestedEvent(WORKLOG_ID));
+    }
+
+    @Test
+    @DisplayName("다른 작성자의 업무 삭제는 거부하고 이벤트를 발행하지 않는다")
+    void deleteWorklog_rejects_non_author() {
+        given(worklogLightIndexProperties.enabled()).willReturn(true);
+        given(worklogLightIndexProperties.deleteEnabled()).willReturn(true);
+        given(worklogLightIndexProperties.internalToken()).willReturn("test-token");
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(savedWorklog(WorklogStatus.IN_PROGRESS)));
+
+        assertThatThrownBy(() -> worklogService.deleteWorklog(
+                new CustomUserPrincipal(999L, "other@test.com", "MEMBER"), WORKLOG_ID))
+                .isInstanceOf(BusinessException.class);
+        verify(eventPublisher, never()).publishEvent(any(WorklogLightDeleteRequestedEvent.class));
+    }
 
     @Test
     @DisplayName("작성 보조는 요청 본문을 AI 클라이언트에 전달하고 응답으로 매핑한다")
@@ -438,6 +479,75 @@ class WorklogServiceTest {
                 eq("완료 처리")
         );
         verify(eventPublisher).publishEvent(new WorklogCompletedEvent(WORKLOG_ID));
+    }
+
+    @Test
+    @DisplayName("수정 인덱싱 게이트가 켜진 경우 본문 변경만 재색인 이벤트를 발행한다")
+    void updateWorklog_requests_index_only_when_index_input_changes() {
+        given(worklogLightIndexProperties.enabled()).willReturn(true);
+        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
+        Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
+        given(worklogTagRepository.findByWorklogId(WORKLOG_ID)).willReturn(List.of());
+        given(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(WORKLOG_ID)).willReturn(java.util.Set.of());
+
+        worklogService.updateWorklog(principal(), WORKLOG_ID, new UpdateWorklogApiDto.Request(
+                "변경된 제목", null, null, null, null, null, null, null, null,
+                null, null, null, null, null), List.of());
+
+        verify(eventPublisher).publishEvent(new WorklogLightIndexRequestedEvent(WORKLOG_ID));
+    }
+
+    @Test
+    @DisplayName("수정 인덱싱 게이트가 켜져도 색인 입력 외 수정은 재색인하지 않는다")
+    void updateWorklog_skips_index_when_only_unrelated_field_changes() {
+        given(worklogLightIndexProperties.enabled()).willReturn(true);
+        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
+        Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
+        given(worklogTagRepository.findByWorklogId(WORKLOG_ID)).willReturn(List.of());
+        given(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(WORKLOG_ID)).willReturn(java.util.Set.of());
+
+        worklogService.updateWorklog(principal(), WORKLOG_ID, new UpdateWorklogApiDto.Request(
+                null, null, null, null, null, WorklogImportance.HIGH, null, null, null,
+                null, null, null, null, null), List.of());
+
+        verify(eventPublisher, never()).publishEvent(any(WorklogLightIndexRequestedEvent.class));
+    }
+
+    @Test
+    @DisplayName("수정 전후 선행 업무 ID가 달라지면 본문이 그대로여도 재색인한다")
+    void updateWorklog_requests_index_when_predecessors_change() {
+        given(worklogLightIndexProperties.enabled()).willReturn(true);
+        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(savedWorklog(WorklogStatus.IN_PROGRESS)));
+        given(worklogTagRepository.findByWorklogId(WORKLOG_ID)).willReturn(List.of());
+        given(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(WORKLOG_ID))
+                .willReturn(java.util.Set.of(11L), java.util.Set.of(12L));
+
+        worklogService.updateWorklog(principal(), WORKLOG_ID, new UpdateWorklogApiDto.Request(
+                null, null, null, null, null, null, null, null, null,
+                List.of(12L), null, null, null, null), List.of());
+
+        verify(eventPublisher).publishEvent(new WorklogLightIndexRequestedEvent(WORKLOG_ID));
+    }
+
+    @Test
+    @DisplayName("태그 이름이 같아도 연결 ID가 바뀌면 재색인한다")
+    void updateWorklog_requests_index_when_tag_id_changes() {
+        given(worklogLightIndexProperties.enabled()).willReturn(true);
+        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(savedWorklog(WorklogStatus.IN_PROGRESS)));
+        given(worklogTagRepository.findByWorklogId(WORKLOG_ID))
+                .willReturn(List.of(WorklogTag.create(WORKLOG_ID, 1L)), List.of(WorklogTag.create(WORKLOG_ID, 2L)));
+        given(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(WORKLOG_ID))
+                .willReturn(java.util.Set.of());
+
+        worklogService.updateWorklog(principal(), WORKLOG_ID, new UpdateWorklogApiDto.Request(
+                null, null, null, null, null, null, null, null, null,
+                null, List.of(2L), List.of(1L), null, null), List.of());
+
+        verify(eventPublisher).publishEvent(new WorklogLightIndexRequestedEvent(WORKLOG_ID));
     }
 
     @Test
