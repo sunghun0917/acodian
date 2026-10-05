@@ -186,6 +186,11 @@ public class Worklog {
         this.aiProcessingStatus = AiProcessingStatus.FAILED;
     }
 
+    /** 원본과 연결 데이터는 보존하면서 일반 조회에서 업무일지를 제외한다. */
+    public void softDelete() {
+        this.isDeleted = Boolean.TRUE;
+    }
+
     /**
      * 사용자 상태 변경으로 완료 상태에 도달한 날짜를 대시보드 완료 기간 집계 기준으로 함께 기록한다.
      */

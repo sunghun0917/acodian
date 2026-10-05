@@ -59,7 +59,7 @@ class WorklogAiPostProcessServiceTest {
             new AiWorklogPipelineProperties(true, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2));
 
     private final AiWorklogLightIndexProperties worklogLightIndexProperties =
-            new AiWorklogLightIndexProperties(true, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2));
+            new AiWorklogLightIndexProperties(true, false, false, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2), null);
 
     private WorklogAiPostProcessService service;
 

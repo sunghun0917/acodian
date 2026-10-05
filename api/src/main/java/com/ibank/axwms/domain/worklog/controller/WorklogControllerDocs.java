@@ -171,6 +171,20 @@ public interface WorklogControllerDocs {
             List<MultipartFile> files
     );
 
+    @Operation(summary = "업무일지 삭제", description = "작성자 본인 업무를 소프트 삭제하고 커밋 후 AI 인덱스 삭제를 요청한다. AI 삭제 연동이 준비되지 않으면 삭제를 거부한다.")
+    @SecurityRequirement(name = "bearerAuth")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "삭제에 성공한다."),
+            @ApiResponse(responseCode = "401", description = "인증이 필요하다.", content = @Content),
+            @ApiResponse(responseCode = "403", description = "작성자가 아니다.", content = @Content),
+            @ApiResponse(responseCode = "404", description = "업무가 없거나 이미 삭제되었다.", content = @Content),
+            @ApiResponse(responseCode = "503", description = "AI 삭제 연동이 준비되지 않았다.", content = @Content)
+    })
+    EmptyResponse deleteWorklog(
+            @Parameter(hidden = true) CustomUserPrincipal principal,
+            @Parameter(description = "삭제 대상 업무 ID", example = "501") Long worklogId
+    );
+
     @Operation(summary = "업무 상태 변경",
             description = "작성자 본인이 업무 상태만 변경한다. "
                     + "서버 상태 전이 정책을 통과한 경우에만 저장하며, 실제 변경 시 상태 이력을 기록한다. "

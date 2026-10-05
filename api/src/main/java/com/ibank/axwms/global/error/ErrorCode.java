@@ -106,6 +106,8 @@ public enum ErrorCode {
     WORKLOG_AI_RETRY_STATUS_INVALID(HttpStatus.CONFLICT, "AI 요약 실패 상태에서만 다시 요청할 수 있습니다."),
     /** LightRAG 업무일지 시맨틱 검색 upstream 이 실패해 검색 결과를 만들 수 없을 때 사용한다. */
     WORKLOG_SEMANTIC_SEARCH_FAILED(HttpStatus.BAD_GATEWAY, "업무일지 시맨틱 검색을 처리할 수 없습니다. 잠시 후 다시 시도해 주세요."),
+    /** AI 삭제 연동이 비활성화되거나 내부 인증 토큰이 없어 삭제 후 인덱스 잔존을 방지해야 할 때 사용한다. */
+    WORKLOG_LIGHT_DELETE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "업무일지 삭제 연동을 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."),
     /** 삭제 요청 대상 파일이 존재하지 않거나 해당 worklog 에 속해 있지 않을 때 사용한다. */
     WORKLOG_FILE_NOT_FOUND(HttpStatus.NOT_FOUND, "삭제 대상 첨부 파일을 찾을 수 없습니다."),
     /** 외부 스토리지 업로드 실패로 업무 첨부 파일을 보관할 수 없어 업무 등록을 완료할 수 없을 때 사용한다. */

@@ -9,6 +9,9 @@ import org.springframework.data.jpa.repository.Modifying;
 
 public interface WorklogTagRepository extends JpaRepository<WorklogTag, Long>, WorklogTagJooqRepository {
 
+    /** 동일 이름의 다른 태그 ID도 수정 재색인 대상으로 판정하기 위해 연결 ID를 조회한다. */
+    List<WorklogTag> findByWorklogId(Long worklogId);
+
     /**
      * AI 콜백 재시도 시 이미 연결된 태그를 제외하기 위해 업무일지-태그 관계를 조회한다.
      */

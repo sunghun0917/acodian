@@ -23,6 +23,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -135,6 +136,17 @@ public class WorklogController implements WorklogControllerDocs {
             @RequestPart(value = "files", required = false) List<MultipartFile> files
     ) {
         worklogService.updateWorklog(principal, worklogId, request, files);
+        return EmptyResponse.INSTANCE;
+    }
+
+    @Override
+    @DeleteMapping("/{worklogId}")
+    @PreAuthorize("hasAnyRole('DIRECTOR','DEPT_HEAD','TEAM_LEAD','MEMBER')")
+    public EmptyResponse deleteWorklog(
+            @AuthenticationPrincipal CustomUserPrincipal principal,
+            @PathVariable Long worklogId
+    ) {
+        worklogService.deleteWorklog(principal, worklogId);
         return EmptyResponse.INSTANCE;
     }
 
