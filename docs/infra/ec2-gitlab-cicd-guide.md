@@ -497,15 +497,20 @@ GitLab auto-cancel 은 변경 영역(web/api/ai)이 아니라 ref 단위로 동�
 
 ### redis
 - `redis:8.10.0-alpine` (Redis Search 포함)
+- 환경별 `redis-data` named volume과 AOF를 사용해 Redis 캐시 데이터 및 질의 버전을 재기동 후에도 유지한다(ADR-022).
 - healthcheck 포함
 - API와 AI에는 동일한 `AI_INTERNAL_TOKEN`을 필수 주입한다. 누락되면 compose 렌더가 실패한다. `infra/.env.example` 값은 스모크 전용이며 운영에 복사하지 않는다.
 
-> **Redis 7 → 8 배포 주의:** 운영 Redis를 이 문서 변경만으로 즉시 교체하지 않는다. Redis는 API 세션 및 AI 작업 큐와 공유하므로, 환경별로 기존 데이터와 복구 절차를 백업·확인하고 Redis 8 이미지로 별도 리허설한 뒤 유지보수 시간에 순차 전환한다. 로컬 compose의 `axwms-redis-data` 볼륨과 배포 compose의 볼륨 없는 정책은 그대로다. 배포 환경에서는 재기동 시 Redis 데이터가 보존된다고 가정하지 말고, 현재 컨테이너의 데이터 보존 방식과 큐·세션 영향부터 확인한다.
+> **Redis 영속화 배포 주의:** Redis는 API 세션 및 AI 작업 큐와 공유한다. 기존 볼륨 없는 배포에서 named volume+AOF로 전환하기 전에 환경별 현재 데이터와 복구 절차를 백업·확인하고, 별도 리허설과 유지보수 창에서 순차 전환한다. 새 빈 볼륨을 연결하는 것만으로 기존 컨테이너의 데이터가 자동 이관되지 않는다.
+
+### ai LightRAG 데이터
+- `lightrag-data` 환경별 named volume을 `/app/data`에 연결해 LightRAG 로컬 상태 JSON을 보존한다(ADR-022).
 
 ### api
 - `build:`가 아니라 `image: ${API_IMAGE}` 사용
 - 즉, CI가 미리 만든 이미지를 서버가 pull 받아 실행
 - postgres/redis가 healthy 상태가 될 때까지 기다림
+- `AI_WORKLOG_LIGHT_INDEX_UPDATE_ENABLED` 및 `AI_WORKLOG_LIGHT_INDEX_DELETE_ENABLED`는 재색인·삭제·재시도 통합 검증 전 `false`를 유지한다.
 
 ### web
 - `image: ${WEB_IMAGE}` (CMP-004), `build:` 사용 안 함

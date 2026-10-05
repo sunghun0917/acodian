@@ -22,6 +22,9 @@ services:
 
   redis:
     image: redis:8.10.0-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
     ports:
       - "${REDIS_HOST_PORT:?REDIS_HOST_PORT required (env-specific offset, e.g. 8400/8401)}:6379"
     healthcheck:
@@ -102,6 +105,8 @@ services:
       AI_WORKLOG_POLISH_CONNECT_TIMEOUT: ${AI_WORKLOG_POLISH_CONNECT_TIMEOUT:-2s}
       AI_WORKLOG_POLISH_READ_TIMEOUT: ${AI_WORKLOG_POLISH_READ_TIMEOUT:-10s}
       AI_WORKLOG_LIGHT_INDEX_ENABLED: ${AI_WORKLOG_LIGHT_INDEX_ENABLED:-true}
+      AI_WORKLOG_LIGHT_INDEX_UPDATE_ENABLED: ${AI_WORKLOG_LIGHT_INDEX_UPDATE_ENABLED:-false}
+      AI_WORKLOG_LIGHT_INDEX_DELETE_ENABLED: ${AI_WORKLOG_LIGHT_INDEX_DELETE_ENABLED:-false}
       AI_WORKLOG_LIGHT_INDEX_BASE_URL: ${AI_WORKLOG_LIGHT_INDEX_BASE_URL:-http://ai:8200/ai}
       AI_WORKLOG_LIGHT_INDEX_CONNECT_TIMEOUT: ${AI_WORKLOG_LIGHT_INDEX_CONNECT_TIMEOUT:-2s}
       AI_WORKLOG_LIGHT_INDEX_READ_TIMEOUT: ${AI_WORKLOG_LIGHT_INDEX_READ_TIMEOUT:-300s}
@@ -140,6 +145,8 @@ services:
 
   ai:
     image: ${AI_IMAGE}
+    volumes:
+      - lightrag-data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -238,6 +245,10 @@ services:
 volumes:
   postgres-data:
     name: axwms-${APP_ENV:?APP_ENV required for volume name isolation}-postgres-data
+  redis-data:
+    name: axwms-${APP_ENV:?APP_ENV required for volume name isolation}-redis-data
+  lightrag-data:
+    name: axwms-${APP_ENV:?APP_ENV required for volume name isolation}-lightrag-data
   qdrant-data:
     name: axwms-${APP_ENV:?APP_ENV required for volume name isolation}-qdrant-data
   neo4j-data:

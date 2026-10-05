@@ -820,3 +820,20 @@
       - Runner 가 전용 빌드 VM 으로 분리되어 local persistent cache 전략을 다시 검토할 수 있는 경우.
       - web/ai Dockerfile 구조가 크게 바뀌어 `mode=max` 비용 대비 효과가 낮아지는 경우.
       - SSafy GitLab Container Registry 가 활성화되어 ADR-007 의 registry 선택을 재검토하는 경우.
+
+- id: ADR-022
+  title: LightRAG 로컬 저장소와 Redis 캐시 데이터 영속화
+  status: adopted
+  date: 2026-10-06
+  stacks: [ai, redis, docker, compose]
+  context: |
+    LightRAG는 로컬 작업 디렉토리의 JSON(doc_status, full_docs 등)에 문서 처리 상태를 추적하고,
+    Redis에는 질의 캐시 버전과 권한 범위별 응답 캐시를 기록한다. 컨테이너 재시작 시
+    로컬 파일 또는 Redis 데이터가 유실되면 Qdrant·Neo4j 상태와의 불일치 및 캐시 재색인 문제가 발생할 수 있다.
+  decision: |
+    배포 compose에서 AI의 /app/data와 Redis의 /data를 환경별 named volume으로 유지한다.
+    Redis는 AOF를 활성화해 질의 캐시 버전과 엔트리의 재시작 유실 위험을 줄인다.
+    AI 이미지에는 non-root app 사용자가 쓸 수 있는 /app/data/lightrag-v3 디렉토리를 준비한다.
+  consequence: |
+    컨테이너 재시작 후에도 LightRAG 상태 JSON과 Redis 캐시 데이터를 보존할 수 있다.
+    대신 volume 용량 관리와 백업 정책을 운영에서 관리해야 한다.
