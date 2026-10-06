@@ -87,6 +87,24 @@ sequenceDiagram
   - 기존 캐시 엔트리는 이전 버전 키가 되므로 즉시 자연스러운 Cache MISS 처리됨 (기존 키는 TTL 만료 시 자동 소멸).
   - **장점**: 캐시 엔트리가 1만 건, 10만 건으로 늘어나도 항상 **O(1) 초저지연(2ms 대)** 무효화 보장.
 
+### 3.3 전역 버전(Global Version) 무효화의 트레이드오프 및 RAG 채택 근거
+
+* **트레이드오프 (Trade-off) 인식**:
+  - 전역 버전을 올리는 방식은 문서 1건이 수정되었을 때, 해당 문서와 전혀 상관없는 다른 질의의 기존 v1 캐시까지 모두 Cache Miss가 발생하여 재생성(RAG 파이프라인 재실행)을 유발하는 **과도한 무효화(False Invalidation)** 비용을 수반합니다.
+* **그럼에도 RAG / GraphRAG에서 전역 버전을 채택한 엔지니어링 근거**:
+  1. **역추적(Reverse-lookup) 불가능성**:
+     - 일반적인 웹 캐시(예: `post:10`)와 달리, RAG 답변은 **수개 문서의 청크와 Neo4j 지식그래프 다중 홉 관계(엔티티·관계 수십 개)가 복합 결합**되어 LLM에 의해 생성됩니다.
+     - 특정 업무일지가 수정/삭제되었을 때, 기존 Redis에 저장된 수많은 복합 질의 중 "어떤 답변이 영향을 받는지" 사전에 정확히 역추적 계산하는 것은 불가능에 가깝고, 역추적 비용 자체가 RAG 검색 비용을 초과합니다.
+  2. **Ghost Read(유령 읽기) 방지의 절대적 우선순위**:
+     - 만약 역추적 실패나 누락으로 인해 수정 전의 캐시가 계속 반환될 경우, 업무 시스템에서는 치명적인 환각(Hallucination) 및 최신성 훼손이 발생합니다.
+     - 엔터프라이즈 업무 시스템에서는 **"조금 느리더라도 100% 최신 정합성을 보장하는 답변"**이 **"빠르지만 오염된 이전 답변"**보다 압도적으로 중요합니다.
+  3. **YAGNI 및 미니멀리즘 준수**:
+     - 복잡한 의존성 추적 그래프를 Redis에 구축하는 대신, 단 2ms의 `INCR` 단일 연산으로 데이터 정합성을 완벽히 수호하고, 이전 캐시는 24시간 TTL을 통해 Redis가 백그라운드에서 자동 회수(GC)하도록 설계했습니다.
+* **향후 캐시 세분화(Granular Invalidation) 고도화 로드맵**:
+  - 향후 트래픽 증가 및 캐시 적중률(Hit Ratio) 극대화가 필요한 시점에 다음 단계로 점진적 확장이 가능합니다:
+    1. **팀(Scope) 단위 버전 분리**: `version:team:{team_id}`를 도입하여 1팀 문서 변경 시 1팀 캐시만 무효화하고 타 팀 캐시 보존.
+    2. **도메인/태그 단위 버전 분리**: 주요 태그별 네임스페이스 버전을 관리하여 무관한 도메인 캐시 보존.
+
 ---
 
 ## 4. 영역별 세부 구현 내역
@@ -106,9 +124,9 @@ sequenceDiagram
    ```
 2. **증분 재색인 및 삭제 오케스트레이션 (`worklog_index_service.py`)**:
    * `reindex_worklogs(worklog_ids)`:
-     1. `delete_document(f"worklog-{id}")`로 이전 JSON 상태 및 벡터/그래프 정리
-     2. `WorklogLightSourceRowReader`로 최신 DB 행을 읽어와 `index_documents` + `index_custom_kg_documents` 실행
-     3. 성공 시 `await self._cache.bump_version()` 호출 (Redis `INCR`)
+     1. `delete_document(f"worklog-{id}")`로 이전 JSON 상태 및 벡터/그래프 정리 (삭제 실패 시 재색인을 건너뛰고 오류를 반환하여 Outbox가 안전하게 재시도하도록 보장)
+     2. 삭제가 성공한 문서만 `WorklogLightSourceRowReader`로 최신 DB 행을 읽어와 `index_documents` + `index_custom_kg_documents` 실행
+     3. 문서 삭제가 1건이라도 성공했거나 텍스트 저장이 완료된 경우, 후속 단계 실패 여부와 무관하게 `await self._cache.bump_version()` 호출 (Dirty Invalidation 강제)
    * `delete_worklogs(worklog_ids)`:
      1. `delete_document(f"worklog-{id}")` 실행
      2. 성공 시 `await self._cache.bump_version()` 호출
