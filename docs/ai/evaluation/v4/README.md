@@ -12,7 +12,7 @@ ai/.venv/Scripts/python.exe -B -X utf8 docs/ai/evaluation/v4/regrade_v4.py
 ```
 
 결과:
-- [V4 종합 최종 평가 보고서](final-report.md) (Baseline vs Reranker 비교 분석 종합)
+- [RAG 최적화 및 V4 종합 최종 평가 보고서](../../report/rag-optimization-and-evaluation-report.md) (Baseline vs Reranker 비교 분석 종합)
 - [Baseline 재채점 보고서](results-ragas-gemini-3.8-flash-20260929/report.md)
 - [Reranker ON 평가 보고서](results-ragas-reranker-v4-mix-only-20260930/report.md)
 
