@@ -84,14 +84,24 @@ class LightWorklogIndexService:
             missing_worklog_ids=missing_worklog_ids,
         )
 
-    async def index_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
+    async def index_worklogs(
+        self,
+        worklog_ids: list[int],
+        *,
+        already_mutated: bool = False,
+    ) -> WorklogLightIndexResponse:
         """요청된 업무일지 ID 순서대로 text/custom KG 통합 index 결과를 반환한다."""
+        if not worklog_ids:
+            if already_mutated:
+                await self._cache.bump_version()
+            return WorklogLightIndexResponse(items=[])
+
         prepared = await self.prepare_documents(worklog_ids)
-        failed_found_ids = await self._index_found_documents(prepared)
+        failed_found_ids, text_inserted = await self._index_found_documents(prepared)
 
         missing_worklog_ids = set(prepared.missing_worklog_ids)
         indexed_worklog_ids = set(prepared.found_worklog_ids) - set(failed_found_ids)
-        if indexed_worklog_ids:
+        if indexed_worklog_ids or text_inserted or already_mutated:
             await self._cache.bump_version()
 
         return WorklogLightIndexResponse(
@@ -107,17 +117,48 @@ class LightWorklogIndexService:
         )
 
     async def reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
-        """기존 인덱스를 단일 문서 단위로 삭제 후 최신 DB 내용으로 재색인한다."""
+        """기존 인덱스를 단일 문서 단위로 삭제 후 최신 DB 내용으로 재색인한다.
+
+        삭제 실패한 문서는 재색인을 진행하지 않고 즉시 실패 처리하며,
+        일부라도 삭제되거나 텍스트가 삽입된 경우 캐시 버전을 증가시킨다.
+        """
         adapter = get_lightrag_worklog_index_adapter()
+        delete_failed_items: dict[int, str] = {}
+        deleted_worklog_ids: list[int] = []
+
         for worklog_id in worklog_ids:
             try:
                 await adapter.delete_document(f"worklog-{worklog_id}")
-            except (LightRagDeleteTimeoutError, LightRagDeleteFailedError):
-                pass
+                deleted_worklog_ids.append(worklog_id)
             except LightRagConfigurationError:
                 raise
+            except LightRagDeleteTimeoutError:
+                delete_failed_items[worklog_id] = ERROR_LIGHTRAG_DELETE_TIMEOUT
+            except LightRagDeleteFailedError:
+                delete_failed_items[worklog_id] = ERROR_LIGHTRAG_DELETE_FAILED
 
-        return await self.index_worklogs(worklog_ids)
+        has_deleted = bool(deleted_worklog_ids)
+
+        indexed_response = await self.index_worklogs(
+            deleted_worklog_ids,
+            already_mutated=has_deleted,
+        )
+        indexed_item_by_id = {item.worklog_id: item for item in indexed_response.items}
+
+        items: list[WorklogLightIndexItem] = []
+        for worklog_id in worklog_ids:
+            if worklog_id in delete_failed_items:
+                items.append(
+                    WorklogLightIndexItem(
+                        worklogId=worklog_id,
+                        indexed=False,
+                        error=delete_failed_items[worklog_id],
+                    )
+                )
+            elif worklog_id in indexed_item_by_id:
+                items.append(indexed_item_by_id[worklog_id])
+
+        return WorklogLightIndexResponse(items=items)
 
     async def delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteResponse:
         """요청된 업무일지 문서를 LightRAG에서 삭제하고 캐시 버전을 증가시킨다."""
@@ -153,10 +194,13 @@ class LightWorklogIndexService:
     async def _index_found_documents(
         self,
         prepared: PreparedLightWorklogDocuments,
-    ) -> dict[int, str]:
-        """조회된 업무일지만 adapter에 전달하고 text/custom KG 실패를 ID별 오류로 변환한다."""
+    ) -> tuple[dict[int, str], bool]:
+        """조회된 업무일지만 adapter에 전달하고 text/custom KG 실패를 ID별 오류로 변환한다.
+
+        반환값: (failed_found_ids, text_inserted)
+        """
         if not prepared.documents:
-            return {}
+            return {}, False
 
         adapter = get_lightrag_worklog_index_adapter()
         try:
@@ -167,12 +211,12 @@ class LightWorklogIndexService:
             return {
                 worklog_id: ERROR_LIGHTRAG_INSERT_TIMEOUT
                 for worklog_id in prepared.found_worklog_ids
-            }
+            }, False
         except LightRagInsertFailedError:
             return {
                 worklog_id: ERROR_LIGHTRAG_INSERT_FAILED
                 for worklog_id in prepared.found_worklog_ids
-            }
+            }, False
 
         try:
             await adapter.index_custom_kg_documents(prepared.custom_kg_documents)
@@ -182,13 +226,13 @@ class LightWorklogIndexService:
             return {
                 worklog_id: ERROR_LIGHTRAG_INSERT_TIMEOUT
                 for worklog_id in prepared.found_worklog_ids
-            }
+            }, True
         except LightRagInsertFailedError:
             return {
                 worklog_id: ERROR_LIGHTRAG_INSERT_FAILED
                 for worklog_id in prepared.found_worklog_ids
-            }
-        return {}
+            }, True
+        return {}, True
 
     def _build_response_item(
         self,

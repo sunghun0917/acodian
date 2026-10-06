@@ -2,6 +2,8 @@ import asyncio
 
 from app.light.v3.service import worklog_index_service as service_module
 from app.light.v3.service.lightrag_adapter import (
+    LightRagDeleteFailedError,
+    LightRagDeleteTimeoutError,
     LightRagInsertFailedError,
     LightRagInsertTimeoutError,
 )
@@ -205,4 +207,134 @@ def test_delete_service_deletes_documents_and_bumps_cache_version(monkeypatch) -
         assert cache.bump_count == 1
 
     asyncio.run(run_case())
+
+
+def test_reindex_service_records_delete_failure_and_skips_insert(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class _Reader:
+        async def fetch_source_rows(self, worklog_ids: list[int]):
+            return {101: make_source_row(101)}
+
+    class _Adapter:
+        async def delete_document(self, document_id: str) -> None:
+            calls.append(f"delete:{document_id}")
+            if document_id == "worklog-102":
+                raise LightRagDeleteTimeoutError("timeout")
+
+        async def index_documents(self, documents) -> None:
+            calls.append(f"index_docs:{[d.document_id for d in documents]}")
+
+        async def index_custom_kg_documents(self, documents) -> None:
+            calls.append(f"index_kg:{[d.document_id for d in documents]}")
+
+    class _FakeCache:
+        def __init__(self) -> None:
+            self.bump_count = 0
+
+        async def bump_version(self) -> int:
+            self.bump_count += 1
+            calls.append("bump_version")
+            return 2
+
+    async def run_case() -> None:
+        adapter = _Adapter()
+        cache = _FakeCache()
+        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
+        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
+
+        service = LightWorklogIndexService(cache=cache)  # type: ignore
+        response = await service.reindex_worklogs([101, 102])
+
+        assert calls == [
+            "delete:worklog-101",
+            "delete:worklog-102",
+            "index_docs:['worklog-101']",
+            "index_kg:['worklog-101']",
+            "bump_version",
+        ]
+        assert [item.model_dump(by_alias=True) for item in response.items] == [
+            {"worklogId": 101, "indexed": True, "error": None},
+            {"worklogId": 102, "indexed": False, "error": "LIGHTRAG_DELETE_TIMEOUT"},
+        ]
+        assert cache.bump_count == 1
+
+    asyncio.run(run_case())
+
+
+def test_reindex_service_all_delete_failures_does_not_bump_and_returns_errors(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class _Adapter:
+        async def delete_document(self, document_id: str) -> None:
+            calls.append(f"delete:{document_id}")
+            raise LightRagDeleteFailedError("failed")
+
+        async def index_documents(self, documents) -> None:
+            calls.append("index_docs")
+
+        async def index_custom_kg_documents(self, documents) -> None:
+            calls.append("index_kg")
+
+    class _FakeCache:
+        def __init__(self) -> None:
+            self.bump_count = 0
+
+        async def bump_version(self) -> int:
+            self.bump_count += 1
+            return 2
+
+    async def run_case() -> None:
+        adapter = _Adapter()
+        cache = _FakeCache()
+        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
+
+        service = LightWorklogIndexService(cache=cache)  # type: ignore
+        response = await service.reindex_worklogs([101])
+
+        assert calls == ["delete:worklog-101"]
+        assert [item.model_dump(by_alias=True) for item in response.items] == [
+            {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_DELETE_FAILED"}
+        ]
+        assert cache.bump_count == 0
+
+    asyncio.run(run_case())
+
+
+def test_index_service_custom_kg_failure_still_bumps_cache_version(monkeypatch) -> None:
+    class _Reader:
+        async def fetch_source_rows(self, worklog_ids: list[int]):
+            return {101: make_source_row(101)}
+
+    class _Adapter:
+        async def index_documents(self, documents) -> None:
+            assert [d.document_id for d in documents] == ["worklog-101"]
+
+        async def index_custom_kg_documents(self, documents) -> None:
+            raise LightRagInsertTimeoutError("timeout")
+
+    class _FakeCache:
+        def __init__(self) -> None:
+            self.bump_count = 0
+
+        async def bump_version(self) -> int:
+            self.bump_count += 1
+            return 2
+
+    async def run_case() -> None:
+        adapter = _Adapter()
+        cache = _FakeCache()
+        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
+        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
+
+        service = LightWorklogIndexService(cache=cache)  # type: ignore
+        response = await service.index_worklogs([101])
+
+        assert [item.model_dump(by_alias=True) for item in response.items] == [
+            {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_INSERT_TIMEOUT"}
+        ]
+        assert cache.bump_count == 1
+
+    asyncio.run(run_case())
+
 
