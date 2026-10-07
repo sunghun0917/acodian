@@ -1,6 +1,7 @@
 package com.ibank.axwms.domain.worklog.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
 import com.ibank.axwms.domain.organization.department.DepartmentStatus;
@@ -20,16 +21,27 @@ import com.ibank.axwms.domain.worklog.WorklogStatus;
 import com.ibank.axwms.domain.worklog.entity.Worklog;
 import com.ibank.axwms.domain.worklog.entity.WorklogDependency;
 import com.ibank.axwms.domain.worklog.repository.jooq.projection.WorklogDependencyReadyParentProjection;
+import com.ibank.axwms.domain.worklog.service.WorklogDependencyService;
+import com.ibank.axwms.global.error.BusinessException;
+import com.ibank.axwms.global.error.ErrorCode;
 import com.ibank.axwms.testsupport.IntegrationTestSupport;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class WorklogDependencyRepositoryIntegrationTest extends IntegrationTestSupport {
 
@@ -40,6 +52,9 @@ class WorklogDependencyRepositoryIntegrationTest extends IntegrationTestSupport 
 
     @Autowired
     private WorklogRepository worklogRepository;
+
+    @Autowired
+    private WorklogDependencyService dependencyService;
 
     @Autowired
     private TeamAdminRepository teamAdminRepository;
@@ -55,6 +70,9 @@ class WorklogDependencyRepositoryIntegrationTest extends IntegrationTestSupport 
 
     @Autowired
     private DepartmentRepository departmentRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @BeforeEach
     void setUp() {
@@ -150,6 +168,117 @@ class WorklogDependencyRepositoryIntegrationTest extends IntegrationTestSupport 
 
         // then
         assertThat(causingPredecessorIds).containsExactly(cyclingPredecessor.getId());
+    }
+
+    @Test
+    @DisplayName("선행 업무 조회 후 다른 트랜잭션이 완료하면 버전 조건부 갱신은 0행을 반환한다")
+    void completed_between_read_and_claim_is_rejected() throws Exception {
+        Fixture fixture = seedFixture();
+        Worklog predecessor = saveWorklog(fixture.author(), fixture.team(), "선행 후보", WorklogStatus.IN_PROGRESS, false);
+        Worklog child = saveWorklog(fixture.author(), fixture.team(), "후속 업무", WorklogStatus.IN_PROGRESS, false);
+        Long predecessorId = predecessor.getId();
+        CountDownLatch snapshotRead = new CountDownLatch(1);
+        CountDownLatch completionCommitted = new CountDownLatch(1);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<Integer> claimResult = executor.submit(() -> tx.execute(status -> {
+                Worklog snapshot = worklogRepository.findById(predecessorId).orElseThrow();
+                Long seenVersion = snapshot.getVersion();
+                snapshotRead.countDown();
+                try {
+                    assertThat(completionCommitted.await(10, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+                return worklogRepository.claimPredecessorVersion(predecessorId, seenVersion, fixture.team().getId());
+            }));
+
+            assertThat(snapshotRead.await(10, TimeUnit.SECONDS)).isTrue();
+            tx.executeWithoutResult(status -> worklogRepository.findById(predecessorId)
+                    .orElseThrow().changeStatus(WorklogStatus.COMPLETED));
+            completionCommitted.countDown();
+
+            assertThat(claimResult.get(10, TimeUnit.SECONDS)).isZero();
+            assertThat(worklogRepository.findById(predecessorId).orElseThrow().getVersion())
+                    .isEqualTo(predecessor.getVersion() + 1);
+            assertThat(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(child.getId())).isEmpty();
+        } finally {
+            completionCommitted.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("미완료 선행 업무는 연결되고 완료된 선행 업무는 새 연결이 거부된다")
+    void dependency_service_enforces_completion_state() {
+        Fixture fixture = seedFixture();
+        Worklog predecessor = saveWorklog(fixture.author(), fixture.team(), "선행 후보", WorklogStatus.IN_PROGRESS, false);
+        Worklog firstChild = saveWorklog(fixture.author(), fixture.team(), "첫 후속 업무", WorklogStatus.IN_PROGRESS, false);
+        Worklog secondChild = saveWorklog(fixture.author(), fixture.team(), "두 번째 후속 업무", WorklogStatus.IN_PROGRESS, false);
+
+        dependencyService.registerPredecessor(firstChild.getId(), fixture.team().getId(), List.of(predecessor.getId()));
+        assertThat(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(firstChild.getId()))
+                .containsExactly(predecessor.getId());
+        assertThat(worklogRepository.findById(predecessor.getId()).orElseThrow().getVersion())
+                .isEqualTo(predecessor.getVersion() + 1);
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> worklogRepository
+                .findById(predecessor.getId()).orElseThrow().changeStatus(WorklogStatus.COMPLETED));
+
+        assertThatThrownBy(() -> dependencyService.registerPredecessor(
+                secondChild.getId(), fixture.team().getId(), List.of(predecessor.getId())))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.WORKLOG_PREDECESSOR_COMPLETED);
+        assertThat(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(secondChild.getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("선행 업무 버전 점유 뒤 낡은 상태 변경은 낙관적 락 충돌로 실패한다")
+    void stale_status_update_after_claim_is_rejected() throws Exception {
+        Fixture fixture = seedFixture();
+        Worklog predecessor = saveWorklog(fixture.author(), fixture.team(), "선행 후보", WorklogStatus.IN_PROGRESS, false);
+        CountDownLatch statusRead = new CountDownLatch(1);
+        CountDownLatch claimCommitted = new CountDownLatch(1);
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try {
+            Future<RuntimeException> staleStatusFailure = executor.submit(() -> {
+                try {
+                    tx.executeWithoutResult(status -> {
+                        Worklog stale = worklogRepository.findById(predecessor.getId()).orElseThrow();
+                        statusRead.countDown();
+                        try {
+                            assertThat(claimCommitted.await(10, TimeUnit.SECONDS)).isTrue();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(e);
+                        }
+                        stale.changeStatus(WorklogStatus.COMPLETED);
+                        worklogRepository.flush();
+                    });
+                    return null;
+                } catch (RuntimeException e) {
+                    return e;
+                }
+            });
+
+            assertThat(statusRead.await(10, TimeUnit.SECONDS)).isTrue();
+            tx.executeWithoutResult(status -> assertThat(worklogRepository.claimPredecessorVersion(
+                    predecessor.getId(), predecessor.getVersion(), fixture.team().getId())).isEqualTo(1));
+            claimCommitted.countDown();
+
+            assertThat(staleStatusFailure.get(10, TimeUnit.SECONDS))
+                    .isInstanceOf(OptimisticLockingFailureException.class);
+            assertThat(worklogRepository.findById(predecessor.getId()).orElseThrow().getStatusCode())
+                    .isEqualTo(WorklogStatus.IN_PROGRESS);
+        } finally {
+            claimCommitted.countDown();
+            executor.shutdownNow();
+        }
     }
 
     /**

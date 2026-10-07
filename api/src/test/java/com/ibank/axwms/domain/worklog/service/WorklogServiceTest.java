@@ -69,6 +69,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -283,6 +284,26 @@ class WorklogServiceTest {
                 .containsExactly(9001L, "worklog/501/report.txt", "report.txt", "txt");
         verify(eventPublisher, never()).publishEvent(any(WorklogAiPipelineRequestedEvent.class));
         verify(eventPublisher, never()).publishEvent(any(WorklogLightIndexRequestedEvent.class));
+    }
+
+    @Test
+    @DisplayName("선행 업무 충돌이 나면 외부 파일 업로드를 시작하지 않는다")
+    void predecessor_conflict_prevents_file_upload() {
+        CreateWorklogApiDto.Request request = request(INSTRUCTION_DATE, DUE_DATE);
+        given(teamService.getTeamOrThrow(TEAM_ID)).willReturn(sampleTeam());
+        given(teamService.isMember(USER_ID, TEAM_ID)).willReturn(true);
+        given(worklogRepository.save(any(Worklog.class))).willAnswer(invocation -> {
+            Worklog worklog = invocation.getArgument(0);
+            ReflectionTestUtils.setField(worklog, "id", WORKLOG_ID);
+            return worklog;
+        });
+        doThrow(new BusinessException(ErrorCode.WORKLOG_PREDECESSOR_CONFLICT))
+                .when(worklogDependencyService).registerPredecessor(WORKLOG_ID, TEAM_ID, request.predecessorWorklogIds());
+
+        assertThatThrownBy(() -> worklogService.createWorklog(principal(), request, sampleFiles()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode").isEqualTo(ErrorCode.WORKLOG_PREDECESSOR_CONFLICT);
+        verifyNoInteractions(fileService, eventPublisher);
     }
 
     @Test
