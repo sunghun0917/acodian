@@ -3,14 +3,18 @@ package com.ibank.axwms.domain.worklog.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.ibank.axwms.domain.worklog.WorklogStatus;
+import com.ibank.axwms.domain.worklog.entity.Worklog;
 import com.ibank.axwms.domain.worklog.dto.PolishWorklogApiDto;
 import com.ibank.axwms.domain.worklog.dto.RecommendWorklogTitleApiDto;
 import com.ibank.axwms.domain.worklog.dto.SearchSemanticWorklogsApiDto;
@@ -20,6 +24,7 @@ import com.ibank.axwms.domain.worklog.service.WorklogService;
 import com.ibank.axwms.domain.worklog.service.search.LightRagWorklogSearchService;
 import com.ibank.axwms.domain.worklog.service.search.WorklogSearchService;
 import com.ibank.axwms.global.response.EmptyResponse;
+import com.ibank.axwms.global.error.GlobalExceptionHandler;
 import com.ibank.axwms.global.response.GlobalResponseAdvice;
 import com.ibank.axwms.global.security.CustomUserPrincipal;
 import java.lang.reflect.Method;
@@ -33,6 +38,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -67,8 +73,23 @@ class WorklogControllerTest {
                 .findAndRegisterModules()
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         mockMvc = MockMvcBuilders.standaloneSetup(worklogController)
-                .setControllerAdvice(new GlobalResponseAdvice())
+                .setControllerAdvice(new GlobalResponseAdvice(), new GlobalExceptionHandler())
                 .build();
+    }
+
+    @Test
+    @DisplayName("상태 변경의 버전 충돌은 내부 오류 대신 재시도 가능한 409로 응답한다")
+    void status_version_conflict_returns_409() throws Exception {
+        doThrow(new ObjectOptimisticLockingFailureException(Worklog.class, 501L))
+                .when(worklogService).updateWorklogStatus(any(), any(), any());
+
+        mockMvc.perform(patch("/worklogs/501/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"statusCode":"COMPLETED","reason":"완료"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("WORKLOG_CONCURRENT_MODIFICATION"));
     }
 
     @Test
