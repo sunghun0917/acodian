@@ -38,7 +38,8 @@ public interface WorklogControllerDocs {
             @ApiResponse(responseCode = "400", description = "요청 값이 올바르지 않다.", content = @Content),
             @ApiResponse(responseCode = "401", description = "인증이 필요하다.", content = @Content),
             @ApiResponse(responseCode = "403", description = "대상 팀에 대한 권한이 없다.", content = @Content),
-            @ApiResponse(responseCode = "404", description = "등록 대상 팀을 찾을 수 없다.", content = @Content)
+            @ApiResponse(responseCode = "404", description = "등록 대상 팀을 찾을 수 없다.", content = @Content),
+            @ApiResponse(responseCode = "409", description = "선행 업무가 이미 완료되었거나 등록 중 변경되었다.", content = @Content)
     })
     CreateWorklogApiDto.Response createWorklog(
             CreateWorklogApiDto.Request request,
@@ -154,7 +155,7 @@ public interface WorklogControllerDocs {
                     + "removeFileIds 는 삭제할 기존 첨부 파일 ID. "
                     + "files part: 새로 추가할 파일들 (선택). "
                     + "teamId 는 수정 불가. dueDate 는 instructionDate 보다 빠를 수 없다. "
-                    + "선행 업무 변경 시 자기참조 / 접근 권한 / 순환 의존을 검증한다. "
+                    + "새 선행 업무 등록 시 자기참조 / 접근 권한 / 순환 의존 / 완료 상태 / 동시 변경을 검증한다. "
                     + "aiSummary 가 들어오면 aiSummaryEdited 가 true 로 표시된다.")
     @SecurityRequirement(name = "bearerAuth")
     @ApiResponses({
@@ -162,7 +163,8 @@ public interface WorklogControllerDocs {
             @ApiResponse(responseCode = "400", description = "요청 값이 올바르지 않거나 일자/선행 검증 실패", content = @Content),
             @ApiResponse(responseCode = "401", description = "인증이 필요하다.", content = @Content),
             @ApiResponse(responseCode = "403", description = "작성자가 아님", content = @Content),
-            @ApiResponse(responseCode = "404", description = "업무가 없거나 소프트 삭제됨, 또는 삭제 대상 첨부 파일을 찾을 수 없음", content = @Content)
+            @ApiResponse(responseCode = "404", description = "업무가 없거나 소프트 삭제됨, 또는 삭제 대상 첨부 파일을 찾을 수 없음", content = @Content),
+            @ApiResponse(responseCode = "409", description = "선행 업무가 이미 완료되었거나 등록 중 변경되었다.", content = @Content)
     })
     EmptyResponse updateWorklog(
             @Parameter(hidden = true) CustomUserPrincipal principal,
@@ -178,6 +180,7 @@ public interface WorklogControllerDocs {
             @ApiResponse(responseCode = "401", description = "인증이 필요하다.", content = @Content),
             @ApiResponse(responseCode = "403", description = "작성자가 아니다.", content = @Content),
             @ApiResponse(responseCode = "404", description = "업무가 없거나 이미 삭제되었다.", content = @Content),
+            @ApiResponse(responseCode = "409", description = "다른 요청의 갱신과 충돌했다.", content = @Content),
             @ApiResponse(responseCode = "503", description = "AI 삭제 연동이 준비되지 않았다.", content = @Content)
     })
     EmptyResponse deleteWorklog(
@@ -195,7 +198,8 @@ public interface WorklogControllerDocs {
             @ApiResponse(responseCode = "400", description = "요청 값이 올바르지 않거나 허용되지 않은 상태 전이", content = @Content),
             @ApiResponse(responseCode = "401", description = "인증이 필요하다.", content = @Content),
             @ApiResponse(responseCode = "403", description = "작성자가 아님", content = @Content),
-            @ApiResponse(responseCode = "404", description = "업무가 없거나 소프트 삭제됨", content = @Content)
+            @ApiResponse(responseCode = "404", description = "업무가 없거나 소프트 삭제됨", content = @Content),
+            @ApiResponse(responseCode = "409", description = "다른 요청의 갱신과 충돌했다.", content = @Content)
     })
     EmptyResponse updateWorklogStatus(
             @Parameter(hidden = true) CustomUserPrincipal principal,
@@ -212,7 +216,7 @@ public interface WorklogControllerDocs {
             @ApiResponse(responseCode = "401", description = "인증이 필요하다.", content = @Content),
             @ApiResponse(responseCode = "403", description = "작성자가 아니다.", content = @Content),
             @ApiResponse(responseCode = "404", description = "업무가 없거나 소프트 삭제됨", content = @Content),
-            @ApiResponse(responseCode = "409", description = "AI 요약 실패 상태가 아니어서 재요청할 수 없다.", content = @Content)
+            @ApiResponse(responseCode = "409", description = "AI 요약 실패 상태가 아니거나 다른 요청의 갱신과 충돌했다.", content = @Content)
     })
     EmptyResponse retryAiSummary(
             @Parameter(hidden = true) CustomUserPrincipal principal,
