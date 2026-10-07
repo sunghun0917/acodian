@@ -1,5 +1,7 @@
 package com.ibank.axwms.domain.worklog.service;
 
+import com.ibank.axwms.domain.worklog.WorklogStatus;
+import com.ibank.axwms.domain.worklog.entity.Worklog;
 import com.ibank.axwms.domain.worklog.entity.WorklogDependency;
 import com.ibank.axwms.domain.worklog.repository.WorklogDependencyRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
@@ -9,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,6 +33,7 @@ public class WorklogDependencyService {
      *  1) 자기참조 — predecessorIds 가 worklogId 자신을 포함하면 거부 (방어적 — create 시점엔 자기 ID 모르지만 update 재사용 대비)
      *  2) 같은 팀 — 선행 worklog 는 자식 worklog 와 동일 팀 소속이어야 한다. 존재/미삭제 검증 포함.
      *  3) 순환 의존 — 사실상 create 시점엔 새 worklog 가 누구의 선행도 아니라 사이클 발생 불가지만, update 흐름과 동일 가드를 적용
+     *  4) 완료·동시 변경 — 저장 직전 후보의 상태와 버전을 조건부 갱신해 충돌 시 전체 트랜잭션을 취소
      *
      * @param worklogId 의존을 등록할 (자식) worklog ID
      * @param childTeamId 자식 worklog 의 소속 팀 ID. 선행 후보는 이 팀에 속한 worklog 여야 한다.
@@ -45,6 +49,7 @@ public class WorklogDependencyService {
         validateSelfReference(worklogId, uniquePredecessorIds);
         validateSameTeam(childTeamId, uniquePredecessorIds);
         validateNoCycle(worklogId, uniquePredecessorIds);
+        validateAndClaimPredecessors(childTeamId, uniquePredecessorIds);
 
         saveAll(worklogId, uniquePredecessorIds);
     }
@@ -53,7 +58,7 @@ public class WorklogDependencyService {
      * 기존 선행 집합을 새 집합으로 교체한다 (수정 흐름 전용).
      *  - null 입력은 변경 없음 (호출 측에서 시멘틱 결정)
      *  - 빈 리스트는 모든 선행 제거를 의미
-     *  - 기존과의 diff 만 처리: toAdd 는 같은 팀/자기참조/사이클 검증, toRemove 는 단순 일괄 삭제
+     *  - 기존과의 diff 만 처리: toAdd 는 같은 팀/자기참조/사이클/완료/동시 변경 검증, toRemove 는 단순 일괄 삭제
      *
      * @param worklogId 의존 그래프의 자식 worklog ID
      * @param childTeamId 자식 worklog 의 소속 팀 ID. 새로 추가되는 선행은 이 팀 소속이어야 한다.
@@ -79,6 +84,7 @@ public class WorklogDependencyService {
         if (!toAdd.isEmpty()) {
             validateSameTeam(childTeamId, toAdd);
             validateNoCycle(worklogId, toAdd);
+            validateAndClaimPredecessors(childTeamId, toAdd);
             saveAll(worklogId, toAdd);
         }
 
@@ -106,6 +112,27 @@ public class WorklogDependencyService {
         for (Long predTeamId : teamIdByWorklogId.values()) {
             if (!childTeamId.equals(predTeamId)) {
                 throw new BusinessException(ErrorCode.WORKLOG_PREDECESSOR_NOT_ACCESSIBLE);
+            }
+        }
+    }
+
+    /** 후보를 읽은 뒤 버전 조건부 갱신으로 완료·삭제·동시 변경을 저장 전에 다시 검증한다. */
+    private void validateAndClaimPredecessors(Long childTeamId, Set<Long> predecessorWorklogIds) {
+        List<Worklog> predecessors = worklogRepository.findAllById(predecessorWorklogIds);
+        if (predecessors.size() != predecessorWorklogIds.size()) {
+            throw new BusinessException(ErrorCode.WORKLOG_PREDECESSOR_NOT_ACCESSIBLE);
+        }
+        for (Worklog predecessor : predecessors) {
+            if (!childTeamId.equals(predecessor.getTeamId()) || predecessor.getIsDeleted()) {
+                throw new BusinessException(ErrorCode.WORKLOG_PREDECESSOR_NOT_ACCESSIBLE);
+            }
+            if (predecessor.getStatusCode() == WorklogStatus.COMPLETED) {
+                throw new BusinessException(ErrorCode.WORKLOG_PREDECESSOR_COMPLETED);
+            }
+        }
+        for (Worklog predecessor : predecessors.stream().sorted(Comparator.comparing(Worklog::getId)).toList()) {
+            if (worklogRepository.claimPredecessorVersion(predecessor.getId(), predecessor.getVersion(), childTeamId) != 1) {
+                throw new BusinessException(ErrorCode.WORKLOG_PREDECESSOR_CONFLICT);
             }
         }
     }

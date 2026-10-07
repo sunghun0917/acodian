@@ -5,6 +5,7 @@ import com.ibank.axwms.global.response.EmptyResponse;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -24,6 +25,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<EmptyResponse>> handleBusinessException(BusinessException exception) {
         return buildErrorResponse(exception.getErrorCode());
+    }
+
+    /** Worklog 버전 충돌은 클라이언트가 최신 상태를 다시 읽을 수 있도록 500 대신 409로 반환한다. */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<EmptyResponse>> handleOptimisticLockingFailureException(
+            OptimisticLockingFailureException exception) {
+        return buildErrorResponse(ErrorCode.WORKLOG_CONCURRENT_MODIFICATION);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

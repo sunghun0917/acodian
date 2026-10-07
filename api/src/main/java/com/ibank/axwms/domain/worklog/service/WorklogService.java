@@ -148,6 +148,12 @@ public class WorklogService {
                 request.dueDate()
         ));
 
+        worklogDependencyService.registerPredecessor(
+                savedWorklog.getId(),
+                savedWorklog.getTeamId(),
+                request.predecessorWorklogIds()
+        );
+
         List<FileService.UploadedFile> uploadedFiles = fileService.uploadWorklogFilesWithoutAiSummaryRequest(
                 savedWorklog.getId(),
                 principal.userId(),
@@ -159,11 +165,6 @@ public class WorklogService {
                 principal.userId()
         );
         registerManualTags(savedWorklog.getId(), request.tagIds());
-        worklogDependencyService.registerPredecessor(
-                savedWorklog.getId(),
-                savedWorklog.getTeamId(),
-                request.predecessorWorklogIds()
-        );
         savedWorklog.startAiProcessing();
         publishWorklogAiPostProcessRequest(savedWorklog, team, uploadedFiles);
 

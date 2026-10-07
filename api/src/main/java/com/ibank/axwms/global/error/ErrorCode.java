@@ -96,6 +96,12 @@ public enum ErrorCode {
     WORKLOG_PREDECESSOR_SELF_REFERENCE(HttpStatus.BAD_REQUEST, "선행 업무로 자기 자신을 지정할 수 없습니다."),
     /** 선행 업무 등록/수정으로 의존 그래프에 순환이 발생할 때 사용한다. */
     WORKLOG_PREDECESSOR_CYCLE(HttpStatus.BAD_REQUEST, "선행 업무로 지정 시 순환 의존이 발생합니다."),
+    /** 완료된 업무를 새 선행 업무로 지정하려 할 때 사용한다. */
+    WORKLOG_PREDECESSOR_COMPLETED(HttpStatus.CONFLICT, "완료된 업무는 선행 업무로 지정할 수 없습니다."),
+    /** 선행 업무 조회 이후 다른 트랜잭션이 업무를 변경해 의존 관계를 안전하게 저장할 수 없을 때 사용한다. */
+    WORKLOG_PREDECESSOR_CONFLICT(HttpStatus.CONFLICT, "선행 업무가 변경되었습니다. 다시 확인해 주세요."),
+    /** 업무일지 변경이 다른 트랜잭션의 갱신과 충돌했을 때 사용한다. */
+    WORKLOG_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "업무일지가 변경되었습니다. 다시 확인해 주세요."),
     /** 작성자가 아닌 사용자가 업무일지를 수정하려 할 때 사용한다. */
     WORKLOG_EDIT_FORBIDDEN(HttpStatus.FORBIDDEN, "업무일지 수정 권한이 없습니다."),
     /** 업무일지 수정 요청에서 현재 상태 기준으로 허용되지 않은 다음 상태를 지정할 때 사용한다. */
