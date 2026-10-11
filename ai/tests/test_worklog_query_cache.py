@@ -155,10 +155,12 @@ async def _invalid_embedding_rejected_before_redis(vector):
 def test_invalidate_all_deletes_only_exact_and_semantic_cache_keys():
     async def run_case():
         cache, redis = make_cache()
+        assert cache._prefix != "worklog:query:v3"
         redis.kv.update({
-            "worklog:query:v3:exact:a": "answer",
-            "worklog:query:v3:semantic:b": "answer",
-            "worklog:query:v3:other:c": "keep",
+            f"{cache._prefix}:exact:a": "answer",
+            f"{cache._prefix}:semantic:b": "answer",
+            f"{cache._prefix}:other:c": "keep",
+            "worklog:query:v3:exact:old": "old answer",
             "unrelated:exact:d": "keep",
         })
 
@@ -166,7 +168,8 @@ def test_invalidate_all_deletes_only_exact_and_semantic_cache_keys():
 
         assert deleted == 2
         assert redis.kv == {
-            "worklog:query:v3:other:c": "keep",
+            f"{cache._prefix}:other:c": "keep",
+            "worklog:query:v3:exact:old": "old answer",
             "unrelated:exact:d": "keep",
         }
         assert all(len(batch) <= 100 for batch in redis.deleted_batches)

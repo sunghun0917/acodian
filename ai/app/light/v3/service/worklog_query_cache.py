@@ -17,8 +17,8 @@ from app.light.v3.model.worklog_query import WorklogLightQueryResponse
 class WorklogQueryCache:
     """Redis 8 Search에 저장하는 업무일지 질의 답변 캐시."""
 
-    _prefix = "worklog:query:v3"
-    _index = "idx:worklog:query:v3"
+    _prefix = "worklog:query:v3:relations-v1"
+    _index = "idx:worklog:query:v3:relations-v1"
     _ttl = 86400
     _dimensions = 768
 
