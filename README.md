@@ -70,7 +70,7 @@ flowchart LR
 | 검색·생성 지연 | Qdrant·Neo4j 검색 병렬화, SSE 스트리밍. **로컬 단일 질의 `v4-033`** 완료 시간 **8.30초 → 4.00초**, 첫 응답 **8.30초 → 2.45초** | [#12](https://github.com/sunghun0917/acodian/pull/12) |
 | 팀 간 데이터 노출 위험 | PostgreSQL 원본 권한 재검증 후 LLM 문맥 구성, 권한 범위별 Redis 캐시 | [#13](https://github.com/sunghun0917/acodian/pull/13), [#21](https://github.com/sunghun0917/acodian/pull/21) |
 | 수정·삭제 후 과거 답변 반환 | 단일 문서 증분 재색인, Transactional Outbox, Redis 버전 무효화. 무효화 요청 **39.96ms → 2.54ms** | [#14](https://github.com/sunghun0917/acodian/pull/14) |
-| RAG 품질 검증 부재 | Naive/Mix 비교 벤치마크 V1~V4, RAGAS 평가, 선택적 리랭킹 | [#7](https://github.com/sunghun0917/acodian/pull/7), [#8](https://github.com/sunghun0917/acodian/pull/8), [#10](https://github.com/sunghun0917/acodian/pull/10) |
+| RAG 품질 검증 부재 | 최종 V4 RAGAS 3지표로 Naive/Mix와 선택적 리랭킹 평가 | [#8](https://github.com/sunghun0917/acodian/pull/8), [#10](https://github.com/sunghun0917/acodian/pull/10) |
 
 ## 구현 상세와 근거
 
@@ -96,10 +96,19 @@ flowchart LR
 - **정합성 범위:** Outbox는 비동기 최종 일관성 방식입니다. DB 커밋부터 워커 반영·캐시 버전 갱신까지는 새 내용이 검색되지 않거나 이전 캐시가 반환될 수 있으므로 즉시 일관성을 보장하지 않습니다.
 - **코드:** [증분 재색인 커밋](https://github.com/sunghun0917/acodian/commit/a68fab56) · [부분 실패 방어 커밋](https://github.com/sunghun0917/acodian/commit/23eb59d7) · [PR #14](https://github.com/sunghun0917/acodian/pull/14) · [기술 보고서](docs/ai/report/worklog-rag-cache-and-reindex-report.md)
 
-### 4. RAG 평가 · 선택적 리랭킹
+### 4. 최종 V4 RAGAS 평가 · 선택적 리랭킹
 
-- **평가 기반:** 합성 업무일지 **200건·50문항**의 V1 코퍼스와 검증기·실행기를 만들고, 관계 복잡도별 V2 **80문항**, ID 없는 자연어 질문 V3 **50문항**, 기준답변을 보완한 V4로 확장했습니다. ([평가 커밋](https://github.com/sunghun0917/acodian/commit/54ad566f), [PR #7](https://github.com/sunghun0917/acodian/pull/7), [V3 커밋](https://github.com/sunghun0917/acodian/commit/7993e5a2), [PR #8](https://github.com/sunghun0917/acodian/pull/8))
-- **리랭킹 실험:** TEI 리랭커를 선택적으로 연동했습니다. V4 Main Overall **44문항**에서 Answer Relevancy **0.8316 → 0.8496**, Context Recall **0.6307 → 0.6572**였지만 Faithfulness는 **0.9396 → 0.8920**으로 하락했습니다. 로컬 CPU 환경의 Mix **50문항**에서는 평균 검색 시간이 약 **104.51초**였고, 답변 캐시는 꺼져 있었습니다. 품질 이득보다 충실도·지연 비용이 커 기본 경로에서는 비활성화했습니다. ([구현 커밋](https://github.com/sunghun0917/acodian/commit/a394e2f7), [PR #10](https://github.com/sunghun0917/acodian/pull/10), [평가 결과](docs/ai/evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md))
+- **평가 기준:** 합성 업무일지 **200건·자연어 질문 50문항**의 최종 채점 버전인 V4를 사용했습니다. V3 질문·응답을 바탕으로 작성자·팀을 묻는 18문항의 기준답변을 보완한 버전이며, 이를 검색 성능 개선으로 해석하지 않습니다. 주평가 지표는 Faithfulness·Answer Relevancy·Context Recall 3개입니다. ([V3 질문 구성 커밋](https://github.com/sunghun0917/acodian/commit/7993e5a2), [V4 평가 커밋](https://github.com/sunghun0917/acodian/commit/37da0e24))
+
+| V4 평가 조건 | Faithfulness | Answer Relevancy | Context Recall |
+| --- | ---: | ---: | ---: |
+| Naive | 0.9110 | 0.3015 | 0.3580 |
+| Mix | 0.9396 | 0.8316 | 0.6307 |
+| Mix + TEI 리랭커 | 0.8920 | 0.8496 | 0.6572 |
+
+각 행은 관계 부재 질문 6개를 분리한 **Main Overall 44문항**의 평균입니다. 관계 부재 답변이 Answer Relevancy에서 0점 처리될 수 있어 별도 집계했습니다. 리랭커는 Mix에만 적용했습니다. ([V4 기본 평가 결과](docs/ai/evaluation/v4/results-ragas-gemini-3.8-flash-20260929/report.md), [V4 리랭커 평가 결과](docs/ai/evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md))
+
+- **리랭킹 판단:** TEI 리랭커는 V4 Mix에서 Answer Relevancy·Context Recall을 소폭 높였지만 Faithfulness는 **0.9396 → 0.8920**으로 하락했습니다. 로컬 CPU 환경의 Mix **50문항**에서는 평균 검색 시간이 약 **104.51초**였고 답변 캐시는 꺼져 있었습니다. 충실도·지연 비용을 고려해 기본 경로에서는 비활성화했습니다. ([구현 커밋](https://github.com/sunghun0917/acodian/commit/a394e2f7), [PR #10](https://github.com/sunghun0917/acodian/pull/10))
 
 ### 5. 권한 검증된 직접 의존관계 문맥
 
@@ -110,4 +119,4 @@ flowchart LR
 ## 검증
 
 - AI 테스트: [환경 준비](ai/AGENTS.md) 후 `cd ai && python -m pytest tests -q` — 2026-10-12 로컬 실행 결과 **209 passed**. 이 결과는 `ai/tests/` 범위이며 실제 Gemini/Redis HTTP 벤치마크나 Spring API E2E를 대체하지 않습니다.
-- 성능·품질 실험의 환경, 원시 결과, 한계: [RAG 응답 시간 보고서](docs/ai/report/rag-optimization-and-evaluation-report.md) · [RAG 평가 자료](docs/ai/evaluation/) · [실임베딩 캐시 측정](docs/ai/report/semantic-cache-real-embedding-benchmark.md) · [재색인·무효화 보고서](docs/ai/report/worklog-rag-cache-and-reindex-report.md)
+- 성능·품질 실험의 환경, 원시 결과, 한계: [RAG 응답 시간 보고서](docs/ai/report/rag-optimization-and-evaluation-report.md) · [V4 RAGAS 기본 평가](docs/ai/evaluation/v4/results-ragas-gemini-3.8-flash-20260929/report.md) · [V4 리랭커 평가](docs/ai/evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md) · [실임베딩 캐시 측정](docs/ai/report/semantic-cache-real-embedding-benchmark.md) · [재색인·무효화 보고서](docs/ai/report/worklog-rag-cache-and-reindex-report.md)
