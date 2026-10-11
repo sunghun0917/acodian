@@ -29,6 +29,8 @@ from app.light.v3.service.worklog_query_cache import WorklogQueryCache
 
 _WORKLOG_PATH = re.compile(r"worklog://([1-9][0-9]*)")
 _WORKLOG_ENTITY = re.compile(r"^Worklog:([1-9][0-9]*)$")
+_MAX_SCOPED_PREDECESSOR_IDS = 100
+_MAX_SCOPED_RELATION_CHARS = 12_000
 
 
 class LightWorklogQueryService:
@@ -198,23 +200,68 @@ class LightWorklogQueryService:
         ]
         if not selected:
             return None
-        context = "\n\n".join(
+
+        authorized_rows = {row.worklog_id: row for row in selected}
+        predecessor_ids = list(dict.fromkeys(
+            predecessor.worklog_id
+            for row in selected
+            for predecessor in row.direct_predecessors
+            if predecessor.worklog_id not in authorized_rows
+        ))
+        if len(predecessor_ids) > _MAX_SCOPED_PREDECESSOR_IDS:
+            raise LightRagQueryFailedError("Scoped worklog relation limit exceeded")
+        if predecessor_ids:
+            predecessor_rows = await self._source_reader(predecessor_ids)
+            authorized_rows.update(
+                (worklog_id, predecessor_rows[worklog_id])
+                for worklog_id in predecessor_ids
+                if worklog_id in predecessor_rows
+                and predecessor_rows[worklog_id].team_id in allowed
+            )
+
+        body_context = "\n\n".join(
             f"worklog_id: {row.worklog_id}\nfile_path: worklog://{row.worklog_id}"
             f"\ntitle: {row.title}\nrequest_content: {row.request_content or ''}"
             f"\nwork_content: {row.work_content}"
             for row in selected
         )
+        relation_lines = []
+        for row in authorized_rows.values():
+            relation_lines.extend((
+                f"Worklog:{row.worklog_id} AUTHORED_BY User:{row.author_id} ({row.author_name})",
+                f"Worklog:{row.worklog_id} BELONGS_TO Team:{row.team_id} ({row.team_name})",
+            ))
+            relation_lines.extend(
+                f"Worklog:{row.worklog_id} HAS_TAG Tag:{tag.tag_id} ({tag.tag_name})"
+                for tag in row.tags
+            )
+        relation_lines.extend(
+            f"Worklog:{row.worklog_id} DEPENDS_ON Worklog:{predecessor.worklog_id} "
+            f"({authorized_rows[predecessor.worklog_id].title})"
+            for row in selected
+            for predecessor in row.direct_predecessors
+            if predecessor.worklog_id in authorized_rows
+        )
+        relation_context = "\n".join(relation_lines)
+        if len(relation_context) > _MAX_SCOPED_RELATION_CHARS:
+            raise LightRagQueryFailedError("Scoped worklog relation context limit exceeded")
+        context = f"{body_context}\n\nconfirmed_relations:\n{relation_context}"
         prompt = (options.system_prompt or "").format(
             response_type=options.response_type,
             user_prompt=request.query,
             context_data=context,
+        )
+        prompt += (
+            "\n\nThe confirmed_relations are permission-filtered. Do not infer missing "
+            "relationships from similar text, and do not treat an absent relation as proof "
+            "that no relation exists."
         )
         references = [
             WorklogLightReferenceItem(
                 referenceId=f"worklog-{row.worklog_id}",
                 filePath=f"worklog://{row.worklog_id}",
             )
-            for row in selected
+            for row in authorized_rows.values()
         ]
         return prompt, references
 
