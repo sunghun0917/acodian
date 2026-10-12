@@ -12,6 +12,7 @@
 - 실제로 수정하는 파일 경로 기준으로 관련 `AGENTS.md` 를 모두 따른다.
   - 예: `api/...` 수정 시 `/AGENTS.md` + `/api/AGENTS.md`
   - 예: `web/...` 수정 시 `/AGENTS.md` + `/web/AGENTS.md`
+  - 예: `ai/...` 수정 시 `/AGENTS.md` + `/ai/AGENTS.md`
   - 예: `infra/...` 수정 시 `/AGENTS.md` + `/infra/AGENTS.md`
 
 ## 3. 프로젝트 개요
@@ -45,11 +46,29 @@
 
 ## 5. 영역별 진입점
 
+- `web` 작업: `/web/AGENTS.md`
 - `api` 작업: `/api/AGENTS.md`
   - API 코드 변경 시 `/api/AGENTS.md` 의 주석/Javadoc 게이트를 따른다. 신규·변경 helper/util/factory/normalization 메서드는 짧아도 Javadoc 누락 여부를 확인한다.
+- `ai` 작업: `/ai/AGENTS.md` 및 해당 `docs/ai/*` 문서
 - `infra` 작업: `/infra/AGENTS.md`
 
-`ai` 는 아직 하위 `AGENTS.md` 가 없으므로, 현재는 이 전역 규칙과 `docs/ai/*` 문서를 직접 따른다.
+## 6. 에이전트 설정 및 스킬 관리
+
+- `AGENTS.md` 는 프로젝트 공통 작업 규칙이고, 각 `SKILL.md` 는 특정 작업에 필요한 절차다. 스킬은 이 파일의 범위·보안·Git 규칙을 덮어쓰지 않는다.
+- `.codex/skills/` 는 Codex/OMX 스킬 위치이고, `.codex/agents/` 와 `.codex/prompts/` 는 역할별 실행 지침이다. 역할 파일과 스킬을 같은 기능으로 취급하지 않는다.
+- 동일한 이름의 스킬이 여러 위치에 있으면 내용을 비교하고 한 원본으로 통합한다. 통합 전에는 각 도구의 발견 경로와 기존 참조를 확인하며, 어느 사본이 자동으로 우선 적용된다고 가정하지 않는다.
+- 스킬이 겹치면 명시적 호출과 현재 세션의 훅 라우팅을 따르고, 그 외에는 작업 산출물에 가장 구체적인 스킬을 선택한다. 같은 목적의 선택적 스킬을 불필요하게 중복 실행하지 않는다.
+- `.agents/roles/`, `.agents/orchestration/`, `.agents/plugins/` 는 현재 Antigravity용 역할·운영 문서다. 이름만으로 Codex 네이티브 역할이나 설치된 플러그인이라고 판단하지 않는다.
+
+### 6.1 프로젝트 스킬 적용 기준
+
+- `api/` 코드 구현·수정에는 `.agents/skills/api-implementation-guard/SKILL.md` 의 백엔드 전용 규칙을 적용한다.
+- API 요구사항 정리는 `.agents/skills/task-requirement-parser/SKILL.md`, API 계약·인가·실패 경로 테스트는 `.agents/skills/api-contract-test/SKILL.md` 를 작업 성격에 맞게 사용한다.
+- 모든 코드 구현·수정 작업에는 Ponytail(Karpathy 가이드라인 통합본)을 적용한다. 이 지침은 API 전용 스킬이나 프로젝트 규칙을 대체하지 않는다.
+- Ponytail은 Codex 플러그인(`ponytail@ponytail`)을 단일 원본으로 사용한다. 작업 전 실제 플러그인 로딩·신뢰 상태를 확인하고, 사용할 수 없으면 그 사실을 보고한다.
+- Superpowers는 일괄 적용하지 않는다. 설계·디버깅·테스트·검증·리뷰 등 작업 역할에 맞는 스킬을 해당 `SKILL.md` 의 발동 조건에 따라 추가 적용하고, 적용한 스킬의 필수 절차는 생략하지 않는다.
+- Ponytail의 최소 구현 원칙은 계약 확인·보안·회귀 검증을 생략할 근거가 아니다. 부가 스킬이나 자동 훅을 사용할 때는 실제 설치 버전과 세션 로딩 상태를 확인한다.
+- OMX 자동 생성 영역은 수동 정리 대상에서 제외한다. 프로젝트 전용 규칙은 이 영역 밖에 유지한다.
 
 <!-- OMX:AGENTS:START -->
 <!-- AUTONOMY DIRECTIVE — DO NOT REMOVE -->
