@@ -25,10 +25,10 @@ base branch 대비 git diff와 산출물 문서를 기반으로 PR 본문 초안
 
 ```
 spawn_agent(
-  role="writer",
-  tier="STANDARD",
-  fork_context=false,
-  task="PR BODY DRAFTING
+  task_name="pr_body",
+  agent_type="writer",
+  fork_turns="none",
+  message="PR BODY DRAFTING
 
 현재 feature branch의 PR 본문 초안을 작성하라.
 
@@ -109,4 +109,4 @@ spawn_agent(
 
 ## Context Isolation Note
 
-PR 본문 작성에 git diff 전체(수천 줄 가능)를 리더가 직접 다루면, 이후 단계(리뷰, 반영)에서 컨텍스트가 빠르게 포화된다. 따라서 `fork_context=true` 대신 **typed writer + diff/stat/name-only + 기존 artifact + 논의점 요약** 조합으로 위임하고, 출력은 **artifact 경로, 짧은 요약, 논의점**만 리더에게 전달한다.
+PR 본문 작성에 git diff 전체(수천 줄 가능)를 리더가 직접 다루면, 이후 단계(리뷰, 반영)에서 컨텍스트가 빠르게 포화된다. 따라서 전체 대화 상속 대신 **typed writer + diff/stat/name-only + 기존 artifact + 논의점 요약** 조합으로 위임하고, 출력은 **artifact 경로, 짧은 요약, 논의점**만 리더에게 전달한다.

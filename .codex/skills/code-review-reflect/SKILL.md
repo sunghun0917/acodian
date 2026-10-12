@@ -27,10 +27,10 @@ description: 리뷰 코멘트 수용/거부 판단 후 코드 수정 + QA. 파�
 
 ```
 spawn_agent(
-  role="executor",
-  tier="THOROUGH",
-  fork_context=false,
-  task="REVIEW REFLECTION + QA
+  task_name="review_reflect",
+  agent_type="executor",
+  fork_turns="none",
+  message="REVIEW REFLECTION + QA
 
 리뷰 코멘트를 검토하고 코드를 수정한 뒤 QA를 수행하라.
 
@@ -121,7 +121,7 @@ Spring Boot:
 
 ## Context Isolation Rationale
 
-이 단계는 **유일하게 소스코드를 수정**하는 단계이므로, 리더 세션에서 직접 수정하면 다른 작업과 변경사항이 섞일 위험이 있다. `spawn_agent(role="executor", fork_context=false)`로 위임하면:
+이 단계는 **유일하게 소스코드를 수정**하는 단계이므로, 리더 세션에서 직접 수정하면 다른 작업과 변경사항이 섞일 위험이 있다. `spawn_agent(agent_type="executor", fork_turns="none")`로 위임하면:
 
 - 수정 작업이 격리된 컨텍스트에서 수행된다.
 - 리더는 **수정 요약**만 받아 사용자에게 보고한다.

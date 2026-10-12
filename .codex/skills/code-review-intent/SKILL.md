@@ -25,10 +25,10 @@ description: 설계의도 문서를 작성. 요구사항, 설계 결정, 트레�
 
 ```
 spawn_agent(
-  role="writer",
-  tier="STANDARD",
-  fork_context=false,
-  task="DESIGN INTENT DOCUMENTATION
+  task_name="design_intent",
+  agent_type="writer",
+  fork_turns="none",
+  message="DESIGN INTENT DOCUMENTATION
 
 현재 feature branch의 설계의도 문서를 작성하라.
 
@@ -96,4 +96,4 @@ spawn_agent(
 
 ## Context Isolation Note
 
-리더가 이 작업을 직접 수행하면 이후 작업(평가기준, PR본문, 리뷰)이 전부 리더 컨텍스트에 쌓여 토큰 낭비와 혼선이 발생한다. 따라서 설계의도 작성은 `fork_context=true` 대신 **typed writer + structured brief + diff** 조합으로 위임하고, 결과 전달은 bounded payload로 제한한다. 입력은 구조화하고, 출력은 artifact 경로와 논의점 중심으로 좁게 유지한다.
+리더가 이 작업을 직접 수행하면 이후 작업(평가기준, PR본문, 리뷰)이 전부 리더 컨텍스트에 쌓여 토큰 낭비와 혼선이 발생한다. 따라서 설계의도 작성은 전체 대화 상속 대신 **typed writer + structured brief + diff** 조합으로 위임하고, 결과 전달은 bounded payload로 제한한다. 입력은 구조화하고, 출력은 artifact 경로와 논의점 중심으로 좁게 유지한다.

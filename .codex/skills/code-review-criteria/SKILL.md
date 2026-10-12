@@ -25,17 +25,17 @@ description: 평가기준 문서 자동 생성. ADR 추출 + code-convention 필
 
 이 skill은 **2-stage `spawn_agent()`**로 동작한다. 리더 세션은 최종 머지 조율만 담당하며, 두 단계 모두 대화 전체를 포크하지 않고 정제된 입력만 넘긴다.
 
-- **Stage 1 (ADR 추출)**: full ADR bleed를 막기 위해 **isolated subagent** (`fork_context=false`)
-- **Stage 2 (평가기준 머지)**: Stage 1 결과와 설계 brief를 결합하는 **isolated subagent** (`fork_context=false`)
+- **Stage 1 (ADR 추출)**: full ADR bleed를 막기 위해 **isolated subagent** (`fork_turns="none"`)
+- **Stage 2 (평가기준 머지)**: Stage 1 결과와 설계 brief를 결합하는 **isolated subagent** (`fork_turns="none"`)
 
 ### Stage 1: ADR 추출 (isolated)
 
 ```
 spawn_agent(
-  role="architect",
-  tier="THOROUGH",
-  fork_context=false,
-  task="ADR EXTRACTION
+  task_name="adr_extract",
+  agent_type="architect",
+  fork_turns="none",
+  message="ADR EXTRACTION
 
 이번 작업의 설계 내용과 관련된 ADR 항목만 추출하라.
 
@@ -64,10 +64,10 @@ Stage 1의 결과를 입력으로 받아 code-convention과 결합한다:
 
 ```
 spawn_agent(
-  role="quality-strategist",
-  tier="STANDARD",
-  fork_context=false,
-  task="CODE QUALITY GUIDE MERGE
+  task_name="criteria_merge",
+  agent_type="writer",
+  fork_turns="none",
+  message="CODE QUALITY GUIDE MERGE
 
 다음 입력을 결합하여 code-quality-guide.md를 작성하라.
 
@@ -136,4 +136,4 @@ spawn_agent(
 
 ADR 전문(예: 50개 ADR × 평균 800자 = 40KB)을 리더 컨텍스트에 직접 주입하면, 이후 작업에서 ADR 토큰이 계속 쌓여 컨텍스트가 빠르게 오염된다. 따라서 ADR 분석은 Stage 1 **isolated subagent**에 격리하고, 리더에게는 **추출 결과와 짧은 요약만** 전달한다.
 
-반면 code-convention 머지 단계는 이미 정제된 ADR 추출 결과와 설계 brief만 있으면 충분하다. 그래서 Stage 2도 **fork_context=false**로 유지하고, 출력은 계속 bounded payload와 산출물 파일로 제한한다.
+반면 code-convention 머지 단계는 이미 정제된 ADR 추출 결과와 설계 brief만 있으면 충분하다. 그래서 Stage 2도 **fork_turns="none"**으로 유지하고, 출력은 계속 bounded payload와 산출물 파일로 제한한다.

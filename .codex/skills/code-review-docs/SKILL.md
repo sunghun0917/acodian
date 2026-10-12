@@ -27,10 +27,10 @@ description: docs/{module}/code-convention.yaml과 docs/{module}/adr.yaml 항목
 
 ```
 spawn_agent(
-  role="executor",
-  tier="THOROUGH",
-  fork_context=false,
-  task="DOCS UPDATE — convention/adr
+  task_name="review_docs",
+  agent_type="executor",
+  fork_turns="none",
+  message="DOCS UPDATE — convention/adr
 
 docs/{module}/code-convention.yaml 또는 docs/{module}/adr.yaml에 항목을 추가/수정/삭제한다.
 {module}은 리더가 전달한다. (예: api, web, infra, ai)
@@ -110,10 +110,10 @@ $code-review-docs --module api              # api 두 문서 모두 (충돌/연�
 
 > 어떤 문서를 업데이트하든, **해당 모듈의 두 문서를 모두 먼저 읽고 분석한다.** 한쪽 문서만 수정하면 충돌과 연쇄 수정을 놓친다.
 
-이 원칙은 위 `spawn_agent()` task에 명시되어 있으며, subagent가 반드시 따라야 한다.
+이 원칙은 위 `spawn_agent()` message에 명시되어 있으며, subagent가 반드시 따라야 한다.
 
 ## Context Isolation Rationale
 
-두 yaml 파일을 동시에 컨텍스트에 끌어와 충돌을 분석하면 토큰 비용이 크다. `spawn_agent(role="executor")`에 위임하면 분석과 파일 수정이 격리된 컨텍스트에서 일어나고, 리더에게는 **변경 제안 목록과 최종 변경 요약**만 전달된다.
+두 yaml 파일을 동시에 컨텍스트에 끌어와 충돌을 분석하면 토큰 비용이 크다. `spawn_agent(agent_type="executor")`에 위임하면 분석과 파일 수정이 격리된 컨텍스트에서 일어나고, 리더에게는 **변경 제안 목록과 최종 변경 요약**만 전달된다.
 
 이 skill은 다른 code-review-* skill과 달리 산출물을 `.codex/review-artifacts/`에 저장하지 않는다. 직접 `docs/{module}/*.yaml`을 수정한다는 점에 주의하라.

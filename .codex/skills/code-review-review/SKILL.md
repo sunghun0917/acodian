@@ -21,14 +21,14 @@ description: 평가기준/설계의도/PR본문/diff를 입력으로 근거 기�
 
 ## Execution Mode (독립 실행 시)
 
-이 skill은 **사용자 확인 없이 자동 진행된다.** 리더는 아래 `spawn_agent()`를 **직접 호출**하여 code-reviewer subagent에 isolated 위임한다. 토큰 비용이 가장 큰 단계이므로 격리가 필수고, 이 단계는 `fork_context=false`를 유지하는 것이 기본이다:
+이 skill은 **사용자 확인 없이 자동 진행된다.** 리더는 아래 `spawn_agent()`를 **직접 호출**하여 code-reviewer subagent에 isolated 위임한다. 토큰 비용이 가장 큰 단계이므로 격리가 필수고, 이 단계는 `fork_turns="none"`을 유지하는 것이 기본이다:
 
 ```
 spawn_agent(
-  role="code-reviewer",
-  tier="THOROUGH",
-  fork_context=false,
-  task="EVIDENCE-BASED CODE REVIEW
+  task_name="review_execution",
+  agent_type="code-reviewer",
+  fork_turns="none",
+  message="EVIDENCE-BASED CODE REVIEW
 
 이 feature branch의 코드리뷰를 수행하라.
 
@@ -127,4 +127,4 @@ spawn_agent(
 
 리뷰 단계는 **가장 큰 컨텍스트**(평가기준 + 설계의도 + PR본문 + diff 전체)를 동시에 다룬다. 리더 세션에서 직접 수행하면 이후 단계(반영, 후속 작업)에서 컨텍스트 한계에 부딪힌다.
 
-`tier="THOROUGH"` + `fork_context=false`로 isolated code-reviewer subagent에서 리뷰를 완수하고, 리더에게는 **severity 요약과 산출물 경로**만 반환한다. full comment body는 `review-comments.md`에만 남긴다.
+`agent_type="code-reviewer"` + `fork_turns="none"`으로 isolated subagent에서 리뷰를 완수하고, 리더에게는 **severity 요약과 산출물 경로**만 반환한다. full comment body는 `review-comments.md`에만 남긴다. 모델·추론 설정은 설치된 역할 설정을 따른다.
