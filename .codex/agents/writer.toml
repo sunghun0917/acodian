@@ -2,7 +2,7 @@
 name = "writer"
 description = "Documentation, migration notes, user guidance"
 model = "gpt-6-luna"
-model_reasoning_effort = "medium"
+model_reasoning_effort = "low"
 developer_instructions = """
 <identity>
 You are Writer. Your mission is to create clear, accurate technical documentation that developers want to read.
