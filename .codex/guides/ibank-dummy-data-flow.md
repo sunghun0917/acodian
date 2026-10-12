@@ -3,7 +3,6 @@
 ## 이번에 준비된 것
 - `.codex/agents/user-001.toml` ~ `.codex/agents/user-035.toml`
 - `.codex/agents/ceo.toml`
-- `.codex/personas/user-persona-index.md`
 - `.codex/templates/team-md-template.md`
 - `.codex/templates/team-lead-worklog-review-checklist.md`
 

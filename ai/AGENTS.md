@@ -11,6 +11,8 @@
 
 가장 간단한 방법은 [`uv`](https://docs.astral.sh/uv/) 도구다 (sudo 권한이 필요 없다).
 
+POSIX 셸에서는:
+
 ```bash
 # uv 설치 (한 번만)
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -23,6 +25,8 @@ uv venv --python 3.12 .venv
 uv pip install -r requirements.txt pytest
 ```
 
+Windows PowerShell에서는 `uv`를 설치해 `PATH`에 등록한 뒤 같은 `uv python install`, `uv venv`, `uv pip install` 명령을 사용한다. 아래 실행 예시는 `ai/`에서 실행한다.
+
 ### 2. 테스트 실행
 
 ```bash
@@ -30,11 +34,13 @@ cd ai
 .venv/bin/pytest tests -q
 ```
 
+Windows PowerShell: `cd ai; .\.venv\Scripts\python.exe -m pytest tests -q`
+
 성공하면 `N passed` 같은 메시지가 보인다. 실패하면 메시지에 따라 수정한다.
 
 ### 3. 에디터에서 타입 추론을 잘 받으려면
 
-VS Code / PyCharm 모두 인터프리터를 ``ai/.venv/bin/python`` 으로 지정한다.
+VS Code / PyCharm 인터프리터는 POSIX에서 ``ai/.venv/bin/python``, Windows에서 ``ai/.venv/Scripts/python.exe`` 로 지정한다.
 이렇게 해야 SQLAlchemy / FastAPI / pgvector 의 타입이 자동 인식된다.
 
 ### 4. 환경변수
@@ -52,6 +58,8 @@ cd ai
 .venv/bin/alembic upgrade head      # 미적용 마이그레이션 모두 적용
 .venv/bin/alembic revision -m "<설명>"  # 새 빈 리비전 파일 생성
 ```
+
+Windows PowerShell에서는 `cd ai` 후 `.\.venv\Scripts\python.exe -m alembic heads`, `.\.venv\Scripts\python.exe -m alembic upgrade head`, `.\.venv\Scripts\python.exe -m alembic revision -m "<설명>"`을 사용한다.
 
 처음에는 마이그레이션이 없어서 ``alembic heads`` 출력이 비어 있다 (정상).
 
@@ -85,9 +93,6 @@ ai/
 
 | 파일/디렉토리 | 소유 기능 |
 |---|---|
-| `app/prompt/chunking.py` | 임베딩·검색 |
-| `app/prompt/tagging.py` | 태그 |
-| `app/chain/chunking_chain.py` | 임베딩·검색 |
 | `app/chain/tagging_chain.py` | 태그 |
 | `app/service/chunking_service.py` | 임베딩·검색 |
 | `app/service/embedding_service.py` | 임베딩·검색 |
@@ -95,11 +100,9 @@ ai/
 | `app/service/tagging_service.py` | 태그 |
 | `app/router/embedding.py` | 임베딩·검색 |
 | `app/router/search.py` | 임베딩·검색 |
-| `app/router/tagging.py` | 태그 |
 | `app/router/tag_merge.py` | 태그 병합 후보 |
 | `app/model/embedding.py` | 임베딩·검색 |
 | `app/model/search.py` | 임베딩·검색 |
-| `app/model/tagging.py` | 태그 |
 | `app/model/tag_merge_model.py` | 태그 병합 후보 |
 | `app/task/embedding_tasks.py` | 임베딩·검색 |
 | `app/task/tagging_tasks.py` | 태그 |
