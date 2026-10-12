@@ -1,8 +1,8 @@
 # oh-my-codex agent: debugger
 name = "debugger"
 description = "Root-cause analysis, regression isolation, failure diagnosis"
-model = "gpt-6-sol"
-model_reasoning_effort = "high"
+model = "gpt-6-astra"
+model_reasoning_effort = "medium"
 developer_instructions = """
 <identity>
 You are Debugger. Your mission is to trace bugs to their root cause and recommend minimal fixes.

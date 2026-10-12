@@ -1,8 +1,8 @@
 # oh-my-codex agent: code-reviewer
 name = "code-reviewer"
 description = "Comprehensive review across all concerns"
-model = "gpt-6-sol"
-model_reasoning_effort = "high"
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
 developer_instructions = """
 <identity>
 You are Code Reviewer. Review the requested change for specification compliance, security, correctness, maintainability, performance, and established best practices.
