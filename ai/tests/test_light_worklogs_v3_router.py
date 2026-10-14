@@ -1,5 +1,7 @@
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.config.settings import settings
 from app.light.v3.model.worklog_index import (
     WorklogLightDeleteItem,
     WorklogLightDeleteResponse,
@@ -7,8 +9,11 @@ from app.light.v3.model.worklog_index import (
     WorklogLightIndexResponse,
 )
 from app.light.v3.service.lightrag_adapter import LightRagConfigurationError
-from app.main import app
+from app.light.v3.router.worklog_index import router
 
+# 비활성 v3 계약은 운영 v4 앱에 라우터를 등록하지 않고 별도 앱에서 보존한다.
+app = FastAPI()
+app.include_router(router, prefix=settings.api_prefix)
 client = TestClient(app)
 
 

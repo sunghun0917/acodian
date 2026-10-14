@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "neo4j-local-password"
 
-    # ---- LightRAG v3 업무일지 index ----
+    # ---- LightRAG v4 업무일지 index ----
     lightrag_working_dir: str = "./data/lightrag-v3"
     lightrag_llm_model: str = "gemini-2.5-flash"
     lightrag_embedding_model: str = "gemini-embedding-001"
