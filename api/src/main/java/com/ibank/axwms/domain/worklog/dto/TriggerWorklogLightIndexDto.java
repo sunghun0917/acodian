@@ -9,7 +9,7 @@ import java.util.List;
 public final class TriggerWorklogLightIndexDto {
 
     /**
-     * Light v3 index endpoint 가 여러 업무 ID 일괄 색인 계약만 제공하므로 단건 생성도 배열로 전달한다.
+     * Light v4 index endpoint 가 여러 업무 ID 일괄 색인 계약만 제공하므로 단건 생성도 배열로 전달한다.
      */
     public record Request(
             List<Long> worklogIds

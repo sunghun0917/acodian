@@ -96,6 +96,23 @@ class LightRagWorklogSearchServiceTest {
         verify(lightRagWorklogSearchClient, never()).queryWorklogs(any());
     }
 
+    @Test
+    @DisplayName("전사 권한은 팀 목록 조회 없이 null scope로 LightRAG를 호출한다")
+    void 전사_권한은_팀_목록_조회_없이_null_scope로_LightRAG를_호출한다() {
+        LightRagWorklogSearchService service = service(true);
+        CustomUserPrincipal principal = principal();
+        given(worklogVisibilityPolicy.resolve(principal)).willReturn(new WorklogVisibilityScope.All());
+        given(lightRagWorklogSearchClient.queryWorklogs(any())).willReturn(lightRagResponse());
+
+        service.searchWorklogs(principal, request());
+
+        ArgumentCaptor<InternalLightRagWorklogQueryApiDto.Request> captor =
+                ArgumentCaptor.forClass(InternalLightRagWorklogQueryApiDto.Request.class);
+        verify(lightRagWorklogSearchClient).queryWorklogs(captor.capture());
+        assertThat(captor.getValue().allowedTeamIds()).isNull();
+        verifyNoInteractions(worklogRepository);
+    }
+
     private LightRagWorklogSearchService service(boolean enabled) {
         return new LightRagWorklogSearchService(
                 worklogVisibilityPolicy,

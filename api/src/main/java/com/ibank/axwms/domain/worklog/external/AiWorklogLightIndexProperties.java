@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.time.Duration;
 
 /**
- * 업무일지 생성 후 AI Light v3 index endpoint 를 호출할 때 쓰는 설정값이다.
+ * 업무일지 생성 후 AI Light v4 index endpoint 를 호출할 때 쓰는 설정값이다.
  */
 @ConfigurationProperties(prefix = "ai.worklog-light-index")
 public record AiWorklogLightIndexProperties(

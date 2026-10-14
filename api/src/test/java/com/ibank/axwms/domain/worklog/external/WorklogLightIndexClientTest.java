@@ -24,7 +24,7 @@ class WorklogLightIndexClientTest {
         AtomicReference<String> token = new AtomicReference<>();
         AtomicReference<String> body = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/ai/light/worklogs-v3/delete", exchange -> {
+        server.createContext("/ai/light/worklogs-v4/delete", exchange -> {
             token.set(exchange.getRequestHeaders().getFirst("X-AI-Internal-Token"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response = "{\"items\":[{\"worklogId\":501,\"deleted\":true,\"error\":null}]}"
@@ -58,7 +58,7 @@ class WorklogLightIndexClientTest {
                 .isInstanceOf(IllegalStateException.class);
 
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/ai/light/worklogs-v3/delete", exchange -> {
+        server.createContext("/ai/light/worklogs-v4/delete", exchange -> {
             exchange.getRequestBody().readAllBytes();
             byte[] response = "{\"items\":[{\"worklogId\":501,\"deleted\":false,\"error\":\"failure\"}]}"
                     .getBytes(StandardCharsets.UTF_8);
@@ -80,14 +80,16 @@ class WorklogLightIndexClientTest {
     }
 
     @Test
-    @DisplayName("Light v3 index endpoint에 worklogIds 배열 body를 POST로 전송한다")
-    void post_worklog_ids_to_light_v3_index_endpoint() throws Exception {
+    @DisplayName("Light v4 index endpoint에 worklogIds 배열 body를 POST로 전송한다")
+    void post_worklog_ids_to_light_v4_index_endpoint() throws Exception {
+        AtomicReference<String> token = new AtomicReference<>();
         AtomicReference<String> method = new AtomicReference<>();
         AtomicReference<String> path = new AtomicReference<>();
         AtomicReference<String> body = new AtomicReference<>();
         CountDownLatch requestArrived = new CountDownLatch(1);
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/ai/light/worklogs-v3/index", exchange -> {
+        server.createContext("/ai/light/worklogs-v4/index", exchange -> {
+            token.set(exchange.getRequestHeaders().getFirst("X-AI-Internal-Token"));
             method.set(exchange.getRequestMethod());
             path.set(exchange.getRequestURI().getPath());
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
@@ -109,14 +111,15 @@ class WorklogLightIndexClientTest {
                     "http://localhost:" + port + "/ai",
                     Duration.ofSeconds(1),
                     Duration.ofSeconds(1),
-                    null
+                    "secret"
             ));
 
             client.requestIndex(TriggerWorklogLightIndexDto.Request.of(501L));
 
             assertThat(requestArrived.await(1, TimeUnit.SECONDS)).isTrue();
+            assertThat(token.get()).isEqualTo("secret");
             assertThat(method.get()).isEqualTo("POST");
-            assertThat(path.get()).isEqualTo("/ai/light/worklogs-v3/index");
+            assertThat(path.get()).isEqualTo("/ai/light/worklogs-v4/index");
             assertThat(body.get()).isEqualTo("{\"worklogIds\":[501]}");
         } finally {
             server.stop(0);
@@ -131,7 +134,7 @@ class WorklogLightIndexClientTest {
                 "{\"items\":[]}",
                 "{\"items\":[{\"worklogId\":501,\"indexed\":true},{\"worklogId\":501,\"indexed\":false}]}"}) {
             HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-            server.createContext("/ai/light/worklogs-v3/index", exchange -> {
+            server.createContext("/ai/light/worklogs-v4/index", exchange -> {
                 exchange.getRequestBody().readAllBytes();
                 byte[] response = body.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -143,7 +146,7 @@ class WorklogLightIndexClientTest {
             try {
                 WorklogLightIndexClient client = new WorklogLightIndexClient(new AiWorklogLightIndexProperties(
                         true, false, false, "http://localhost:" + server.getAddress().getPort() + "/ai",
-                        Duration.ofSeconds(1), Duration.ofSeconds(1), null));
+                        Duration.ofSeconds(1), Duration.ofSeconds(1), "secret"));
                 assertThatThrownBy(() -> client.requestIndex(TriggerWorklogLightIndexDto.Request.of(501L)))
                         .isInstanceOf(IllegalStateException.class);
             } finally {
@@ -158,7 +161,7 @@ class WorklogLightIndexClientTest {
         AtomicReference<String> token = new AtomicReference<>();
         AtomicReference<String> body = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-        server.createContext("/ai/light/worklogs-v3/reindex", exchange -> {
+        server.createContext("/ai/light/worklogs-v4/reindex", exchange -> {
             token.set(exchange.getRequestHeaders().getFirst("X-AI-Internal-Token"));
             body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response = "{\"items\":[{\"worklogId\":501,\"indexed\":true}]}".getBytes(StandardCharsets.UTF_8);
@@ -192,4 +195,42 @@ class WorklogLightIndexClientTest {
         assertThatThrownBy(() -> client.requestReindex(TriggerWorklogLightIndexDto.Request.of(501L)))
                 .isInstanceOf(IllegalStateException.class);
     }
+    @Test
+    @DisplayName("색인은 내부 토큰 누락 또는 공백이면 네트워크 호출 전 실패한다")
+    void index_requires_internal_token() {
+        for (String token : new String[]{null, "", " "}) {
+            WorklogLightIndexClient client = new WorklogLightIndexClient(new AiWorklogLightIndexProperties(
+                    true, false, false, "http://localhost:1/ai",
+                    Duration.ofSeconds(1), Duration.ofSeconds(1), token));
+            assertThatThrownBy(() -> client.requestIndex(TriggerWorklogLightIndexDto.Request.of(501L)))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("AI 색인 인증 거절과 토큰 미설정 응답은 후처리 실패로 전달한다")
+    void index_propagates_authentication_failure() throws Exception {
+        for (int status : new int[]{403, 503}) {
+            HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+            server.createContext("/ai/light/worklogs-v4/index", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                exchange.sendResponseHeaders(status, -1);
+                exchange.close();
+            });
+            server.start();
+            try {
+                WorklogLightIndexClient client = new WorklogLightIndexClient(new AiWorklogLightIndexProperties(
+                        true, false, false, "http://localhost:" + server.getAddress().getPort() + "/ai",
+                        Duration.ofSeconds(1), Duration.ofSeconds(1), "secret"));
+                assertThatThrownBy(() -> client.requestIndex(TriggerWorklogLightIndexDto.Request.of(501L)))
+                        .isInstanceOf(org.springframework.web.client.RestClientResponseException.class)
+                        .satisfies(error -> assertThat(
+                                ((org.springframework.web.client.RestClientResponseException) error)
+                                        .getStatusCode().value()).isEqualTo(status));
+            } finally {
+                server.stop(0);
+            }
+        }
+    }
+
 }
