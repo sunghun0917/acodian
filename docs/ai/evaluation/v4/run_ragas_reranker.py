@@ -1,4 +1,4 @@
-"""Full V3 baseline evaluation: vanilla naive/mix, no relation or anchor repair."""
+"""Evaluate the current app.light.v4 mix pipeline on the frozen 50-case V4 benchmark."""
 from __future__ import annotations
 
 import argparse
@@ -12,18 +12,17 @@ import os
 from pathlib import Path
 import statistics
 import sys
+import re
+import time
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'v1'))
 import run_ragas as base
-base.PARAMS['enable_rerank'] = True
 
-METRICS = [*base.METRICS, 'factual_correctness']
+METRICS = ['faithfulness', 'answer_relevancy', 'context_recall']
 REPORT_METRICS = ('faithfulness', 'answer_relevancy', 'context_recall')
-MODES = ('naive', 'mix')
+MODES = ('mix',)
 JUDGE_MODEL = 'gemini-3.8-flash'
-FLAGS = dict(postgres_relation_repair=False, anchor_replacement=False,
-             extra_neo4j_expansion=False, rerank=True, builtin_mix_graph=True)
 
 
 def load_cases() -> list[dict]:
@@ -49,51 +48,182 @@ def load_cases() -> list[dict]:
 
 def generation_case(case: dict) -> dict:
     """Only question enters retrieval/generation; gold IDs are withheld."""
-    return {'question': case['question'], 'expected_worklog_ids': []}
+    return {'question': case['question']}
 
 
 def contract(settings, output: Path | None = None) -> dict:
-    """Fingerprint executable/data/local index inputs without recording credentials."""
-    if settings.lightrag_llm_model == JUDGE_MODEL:
+    """Fingerprint current pipeline/models/frozen data/index, never credential values."""
+    if JUDGE_MODEL in settings.lightrag_answer_llm_model_candidates:
         raise ValueError('Generation and judge models must differ')
-    paths = [Path(__file__), Path(base.__file__), HERE/'benchmark-v4.jsonl', HERE.parent/'v3'/'validation-details.jsonl', HERE.parent/'v3'/'manifest.json',
+    paths = [Path(__file__), Path(base.__file__), HERE/'benchmark-v4.jsonl',
+             HERE.parent/'v3'/'validation-details.jsonl', HERE.parent/'v3'/'manifest.json',
              HERE.parent/'v1'/'evaluation-corpus-v1.sql', HERE.parent/'v1'/'generate_corpus.py',
-             base.AI/'app/light/v3/service/lightrag_adapter.py']
-    if output is not None and (output/'index-preflight.json').exists():
-        paths.append(output/'index-preflight.json')
-    relevant = {k: v for k, v in settings.model_dump(mode='json').items()
-                if k.startswith('lightrag_') and not any(s in k for s in ('key', 'password', 'secret', 'token'))}
-    return dict(model=settings.lightrag_llm_model, judge_model=JUDGE_MODEL, embedding_model=settings.lightrag_embedding_model,
+             base.AI/'app/config/settings.py', *sorted((base.AI/'app/light/v4').rglob('*.py'))]
+    relevant = {k: v for k, v in settings.model_dump(mode='json').items() if k.startswith('lightrag_')}
+    from app.light.v4.prompt.worklog_query_prompt import build_worklog_query_system_prompt
+    prompt = build_worklog_query_system_prompt(worklog_detail_base_url=settings.worklog_detail_base_url)
+    preflight = base.verify_local(settings)
+    directory = Path(settings.lightrag_working_dir).resolve()
+    docs = base.read(directory/'kv_store_full_docs.json')
+    if any(d.get('worklog_source_schema_version') != 1 or not d.get('worklog_source') for d in docs.values()):
+        raise ValueError('Index does not contain current v4 source snapshots')
+    preflight['index_hashes'] = {p.name: base.sha(p) for p in sorted(directory.glob('kv_store_*.json'))
+                               if 'llm_response_cache' not in p.name}
+    return dict(pipeline='app.light.v4', benchmark_version='v4', row_id_prefix='v4',
+                model=settings.lightrag_answer_llm_model_candidates[0],
+                answer_models=settings.lightrag_answer_llm_model_candidates,
+                keyword_models=settings.lightrag_llm_model_candidates,
+                judge_model=JUDGE_MODEL, embedding_model=settings.lightrag_embedding_model,
                 versions={n: importlib.metadata.version(n) for n in ('ragas', 'lightrag-hku', 'google-genai', 'instructor')},
-                hashes={p.relative_to(base.ROOT).as_posix(): base.sha(p) for p in paths},
-                preflight=base.verify_local(settings), params=base.PARAMS, features=FLAGS,
-                prompt_sha256=hashlib.sha256(base.PROMPT.encode()).hexdigest(),
+                hashes={p.relative_to(base.ROOT).as_posix(): base.sha(p) for p in paths}, preflight=preflight,
+                params=dict(mode='mix', top_k=settings.lightrag_query_top_k,
+                            chunk_top_k=settings.lightrag_query_chunk_top_k,
+                            enable_rerank=settings.lightrag_rerank_enabled,
+                            rerank_model=settings.lightrag_rerank_model,
+                            response_type=settings.lightrag_query_response_type, allowed_team_ids=None),
+                prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest(),
                 configuration_sha256=hashlib.sha256(json.dumps(relevant, sort_keys=True).encode()).hexdigest(),
-                temperature=0, metrics=METRICS, factual=dict(mode='f1', atomicity='high', coverage='high'),
-                response_cache=False, keyword_cache=True)
+                metrics=METRICS, judge_temperature=0, response_cache=False, keyword_cache=False)
+
+
+def check_external_chunks(chunks: dict, payloads: list[dict]) -> None:
+    """Require native vector payloads to match local chunk IDs, text and provenance."""
+    indexed = {p['id']: p for p in payloads}
+    if len(indexed) != len(payloads) or set(indexed) != set(chunks):
+        raise ValueError('Qdrant/global local chunk ID mismatch')
+    for chunk_id, row in chunks.items():
+        if any(indexed[chunk_id].get(k) != row.get(k) for k in ('content', 'full_doc_id', 'file_path')):
+            raise ValueError('Qdrant/global local chunk content or provenance mismatch')
+
+
+async def verify_external_index(settings) -> dict:
+    """Read and fingerprint the live native graph/vector scope before any paid query/resume."""
+    from qdrant_client import QdrantClient, models
+    from neo4j import AsyncGraphDatabase
+    # This frozen benchmark is a global/base index, never an arbitrary environment override.
+    if settings.lightrag_workspace or os.environ.get('NEO4J_WORKSPACE', ''):
+        raise ValueError('Frozen V4 evaluation requires the global/base workspace')
+    directory = Path(settings.lightrag_working_dir).resolve()
+    docs = base.read(directory/'kv_store_full_docs.json')
+    chunks = base.read(directory/'kv_store_text_chunks.json')
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+    result = {'workspace': 'base', 'qdrant': {}}
+    client = QdrantClient(url=settings.lightrag_qdrant_url, api_key=settings.lightrag_qdrant_api_key or None, timeout=120)
+    try:
+        rag = build_adapter(settings)._build_lightrag()
+        for namespace in ('chunks', 'entities', 'relationships'):
+            name = getattr(rag, namespace+'_vdb').final_namespace
+            points, offset = [], None
+            while True:
+                batch, offset = client.scroll(name, limit=128, offset=offset, with_payload=True, with_vectors=True,
+                    scroll_filter=models.Filter(must=[models.FieldCondition(key='workspace_id', match=models.MatchValue(value='_'))]))
+                points.extend(batch)
+                if offset is None:
+                    break
+            if not points:
+                raise ValueError('Empty native global Qdrant collection: '+name)
+            if namespace == 'chunks':
+                check_external_chunks(chunks, [p.payload for p in points])
+            result['qdrant'][name] = {'count': len(points), 'sha256': digest([
+                {'id': str(p.id), 'payload': p.payload, 'vector': p.vector} for p in sorted(points, key=lambda p: str(p.id))])}
+    finally:
+        client.close()
+    driver = AsyncGraphDatabase.driver(settings.neo4j_uri, auth=(settings.neo4j_user, settings.neo4j_password))
+    try:
+        async with driver.session(database=settings.lightrag_neo4j_database) as session:
+            nodes = await (await session.run('MATCH (n:base) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS properties ORDER BY id')).data()
+            edges = await (await session.run('MATCH (a:base)-[r]->(b:base) RETURN elementId(r) AS id, elementId(a) AS source, elementId(b) AS target, type(r) AS type, properties(r) AS properties ORDER BY id')).data()
+        expected = {'Worklog:'+k.removeprefix('worklog-') for k in docs}
+        actual = {n['properties']['entity_id'] for n in nodes if n['properties'].get('entity_id', '').startswith('Worklog:')}
+        if actual != expected:
+            raise ValueError('Neo4j/global local canonical Worklog ID mismatch')
+        result['neo4j'] = {'nodes': len(nodes), 'edges': len(edges), 'sha256': digest({'nodes': nodes, 'edges': edges})}
+    finally:
+        await driver.close()
+    return result
 
 
 def check_contract(previous: dict, current: dict) -> None:
-    """Fail rather than mixing different code, models, data, or index versions."""
-    prev_c = previous.get('contract', {})
-    for key in ('model', 'judge_model', 'embedding_model', 'params', 'features', 'prompt_sha256'):
-        if prev_c.get(key) != current.get(key):
-            raise ValueError(f'Resume contract drift on {key}: {prev_c.get(key)} != {current.get(key)}')
-    # Check hashes with normalized posix paths
-    prev_hashes = {Path(k).as_posix(): v for k, v in prev_c.get('hashes', {}).items()}
-    curr_hashes = {Path(k).as_posix(): v for k, v in current.get('hashes', {}).items()}
-    for path_key, expected_sha in curr_hashes.items():
-        if path_key in prev_hashes and prev_hashes[path_key] != expected_sha:
-            raise ValueError(f'Resume contract drift on file {path_key}')
+    """Reject changed/missing pipeline, versions, hashes or index inputs on resume."""
+    old = previous.get('contract', {})
+    if old != current:
+        changed = sorted(k for k in set(old) | set(current) if old.get(k) != current.get(k))
+        raise ValueError('Resume contract drift: '+', '.join(changed)+'; use a new --output directory')
 
 
 def check_report_inputs(meta: dict) -> None:
-    """Offline reports may change formatting, but never relabel changed input data."""
-    hashes = {Path(k).as_posix(): v for k, v in meta.get('contract', {}).get('hashes', {}).items()}
+    """Offline reports cannot relabel changed benchmark data or historical v3 runs."""
+    if meta['contract'].get('pipeline') != 'app.light.v4':
+        raise ValueError('Historical v3 output is immutable; use its saved report')
     for path in (HERE/'benchmark-v4.jsonl', HERE.parent/'v3'/'validation-details.jsonl'):
-        key = path.relative_to(base.ROOT).as_posix()
-        if hashes.get(key) != base.sha(path):
+        if meta['contract']['hashes'].get(path.relative_to(base.ROOT).as_posix()) != base.sha(path):
             raise ValueError('Report input drift: '+path.name)
+
+
+def context_units(system_prompt: str) -> tuple[str, list[str], list[str]]:
+    """Keep the actual native graph/body JSON records sent to the answer model."""
+    if '\n---Context---\n' not in system_prompt:
+        raise ValueError('Missing actual v4 generation context')
+    context = system_prompt.split('\n---Context---\n', 1)[1]
+    units, chunks = [], []
+    for line in context.splitlines():
+        if line.strip().startswith('{'):
+            item = json.loads(line)
+            units.append(line)
+            if 'content' in item:
+                chunks.append(item['content'])
+    if not units:
+        raise ValueError('No native JSON context records in actual v4 generation prompt')
+    return context, units, chunks
+
+
+def build_adapter(settings):
+    """Observe real v4 generation without replacing its prompt, model or retrieval."""
+    from app.light.v4.service.lightrag_adapter import LightRagWorklogIndexAdapter
+
+    class EvaluationAdapter(LightRagWorklogIndexAdapter):
+        def _build_lightrag(self):
+            rag = super()._build_lightrag()
+            rag.enable_llm_cache = False
+            rag.llm_response_cache.global_config['enable_llm_cache'] = False
+            return rag
+
+        async def _complete_answer(self, prompt, **kwargs):
+            self.system_prompt = kwargs.get('system_prompt', '')
+            self.retrieval_seconds = time.perf_counter() - self.started
+            return await super()._complete_answer(prompt, **kwargs)
+
+        async def query_worklogs(self, options):
+            result = await super().query_worklogs(options)
+            self.raw = result.raw
+            return result
+
+    return EvaluationAdapter(settings_obj=settings)
+
+
+def build_service(settings, adapter):
+    """Use the production service with no Redis answer cache."""
+    from app.light.v4.service.worklog_query_service import LightWorklogQueryService
+    return LightWorklogQueryService(settings_obj=settings, adapter_factory=lambda: adapter, cache=None)
+
+
+async def retrieve_generate(adapter, service, case: dict) -> dict:
+    """Generate one global-scope answer and retain exactly the evidence shown to its LLM."""
+    from app.light.v4.model.worklog_query import WorklogLightQueryRequest
+    adapter.system_prompt, adapter.raw = '', {}
+    adapter.started = time.perf_counter()
+    response = await service.query_worklogs(WorklogLightQueryRequest(query=case['question'], allowedTeamIds=None))
+    total_seconds = time.perf_counter() - adapter.started
+    if not response.answer.strip():
+        raise ValueError('Empty v4 generated answer')
+    context, units, chunks = context_units(adapter.system_prompt)
+    ids = sorted({int(x) for c in chunks for x in re.findall(r'worklog_id:\s*(\d+)', c)})
+    return dict(response=response.answer, contexts=units, chunks=chunks, exact_context=context,
+                system_prompt=adapter.system_prompt, references=[r.model_dump(mode='json') for r in response.references],
+                retrieval=adapter.raw.get('data', {}), retrieval_metadata=adapter.raw.get('metadata', {}),
+                retrieved_worklog_ids=ids, retrieval_seconds=adapter.retrieval_seconds,
+                total_seconds=total_seconds, generation_usage=None)
 
 
 def quota_exhausted(row: dict) -> bool:
@@ -103,152 +233,152 @@ def quota_exhausted(row: dict) -> bool:
         errors.append(row['generation_error'])
     for error in errors:
         message = str(error.get('message', '')).lower()
-        if error.get('status_code') == 402 or '402' in message or 'prepayment' in message or 'credit' in message and 'exhaust' in message:
+        if error.get('status_code') in (402, 429) or any(x in message for x in ('402', '429', 'quota', 'prepayment', 'resource_exhausted')) or 'credit' in message and 'exhaust' in message:
             return True
     return False
 
 
-async def score_row(row: dict, judge, metrics: dict, factual) -> None:
-    """Reuse four baseline metrics and score factual F1 independently, resumably."""
-    if row.get('scores', {}).get('factual_correctness') is None:
-        row.setdefault('score_errors', {}).pop('factual_correctness', None)
-    await base.evaluate_row(row, judge, metrics)
-    if quota_exhausted(row) or row.get('scores', {}).get('factual_correctness') is not None:
-        return
-    for attempt in range(2):
-        try:
-            result = await asyncio.wait_for(factual.ascore(response=row['response'], reference=row['reference']), 240)
-            value = float(result.value)
-            if not math.isfinite(value):
-                raise ValueError('Non-finite factual score')
-            row['scores']['factual_correctness'] = value
-            row['score_errors'].pop('factual_correctness', None)
-            return
-        except Exception as exc:
-            row['scores']['factual_correctness'] = None
-            row['score_errors']['factual_correctness'] = base.safe_error(exc, 'factual_correctness')
-            if quota_exhausted(row):
-                return
-            if attempt == 0:
-                await asyncio.sleep(3)
+def generation_error(error: Exception) -> dict:
+    """Keep the sanitized provider cause so v4 wrappers cannot hide billing/quota failures."""
+    while error.__cause__ is not None:
+        error = error.__cause__
+    return base.safe_error(error, 'retrieval_generation')
+
+
+async def score_row(row: dict, path: Path, judge, metrics: dict) -> None:
+    """Checkpoint each completed paid metric before starting the next one."""
+    for name, metric in metrics.items():
+        if valid_score(row.get('scores', {}).get(name)):
+            continue
+        row.setdefault('scores', {}).pop(name, None)
+        row.setdefault('score_errors', {}).pop(name, None)
+        await base.evaluate_row(row, judge, {name: metric})
+        base.save(path, row)
+        if quota_exhausted({'score_errors': {name: row['score_errors'].get(name, {})}}):
+            raise RuntimeError('Billing/quota exhausted; saved scores can be resumed')
+
+
+def valid_score(value) -> bool:
+    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
 
 
 def row_complete(row: dict) -> bool:
-    """An answer plus all finite scores is required for completion."""
-    return 'response' in row and all(isinstance(row.get('scores', {}).get(m), (int, float))
-        and math.isfinite(row['scores'][m]) for m in METRICS)
+    """A nonempty answer and all finite primary scores are required for completion."""
+    return bool(row.get('response')) and all(valid_score(row.get('scores', {}).get(m)) for m in METRICS)
 
 
 def read_rows(output: Path, cases: list[dict]) -> list[dict]:
     """Reject stale/foreign rows instead of quietly aggregating unrelated data."""
-    allowed = {(c['id'], mode) for c in cases for mode in MODES}
+    allowed = {(c['id'], mode): c for c in cases for mode in MODES}
     rows, seen = [], set()
     for path in sorted((output/'rows').glob('*.json')):
         row = base.read(path)
         key = (row['id'], row['mode'])
         if key not in allowed or key in seen or path.name != f'{key[0]}--{key[1]}.json':
             raise ValueError('Unexpected or duplicate result row: '+path.name)
+        if any(row.get(k) != allowed[key][k] for k in ('question', 'reference')):
+            raise ValueError('Result question/reference drift: '+path.name)
         seen.add(key)
         rows.append(row)
     return rows
 
 
 def report(output: Path, meta: dict, cases: list[dict]) -> dict:
-    """Build category/paired summaries offline, retaining valid denominators."""
+    """Use 50-row denominators and exclude failed scores, not replace them with zero."""
     rows = read_rows(output, cases)
-    completed = sum('response' in r and all(r.get('scores', {}).get(m) is not None for m in REPORT_METRICS) for r in rows)
-    generated = sum('response' in r for r in rows)
-    rescored = sum(r.get('scores', {}).get('context_precision_all') is not None for r in rows)
-    score_count = sum(r.get('scores', {}).get(m) is not None for r in rows for m in REPORT_METRICS)
-    summary = dict(expected_rows=100, generated_rows=generated, complete_rows=completed,
-                   expected_scores=300, valid_scores=score_count,
+    expected = len(cases) * len(MODES)
+    summary = dict(expected_rows=expected, generated_rows=sum(bool(r.get('response')) for r in rows),
+                   complete_rows=sum(row_complete(r) for r in rows), expected_scores=expected * len(METRICS),
+                   valid_scores=sum(valid_score(r.get('scores', {}).get(m)) for r in rows for m in METRICS),
                    generation_errors=sum(bool(r.get('generation_error')) for r in rows),
-                   score_errors=sum(sum(m in r.get('score_errors', {}) for m in REPORT_METRICS) for r in rows),
-                   status='complete' if completed == 100 and score_count == 300 else 'incomplete')
+                   score_errors=sum(sum(m in r.get('score_errors', {}) for m in METRICS) for r in rows))
+    summary['status'] = 'complete' if summary['complete_rows'] == expected else 'incomplete'
+    summary['validation_status'] = meta.get('final_validation', {}).get('status', 'pending')
     config = meta['contract']
-    lines = ['# V4 Naive / LightRAG Mix 평가 — 관계 보완 OFF', '',
-             f"- 상태: **{summary['status']}** · 생성 {generated}/100 · 주평가 3지표 채점 완료 {completed}/100 · 유효 점수 {score_count}/300",
-             f"- 생성 모델: `{config['model']}` · 평가 모델: `{config['judge_model']}` · 임베딩: `{config['embedding_model']}` · temperature=0",
-             '- Reranker: ON (bongsoo/klue-cross-encoder-v1).',
-             '- 기존 200건 인덱스 재사용. 재인덱싱/삽입 없음. 기존 검색과 동일한 top_k=10, chunk_top_k=5.',
-             '- All 50 questions run in both modes; mode order alternates, answer cache is OFF, keyword cache may be reused.',
-             '- 실제 생성 프롬프트·전체 문맥·본문 청크·답변·사용량·시간은 문항 JSON에 보존. 추가 판정 trace는 수집하지 않음.',
-             '', '## 분류별 평균', '',
-             '점수는 0~1, 높을수록 좋음. 각 셀은 **평균 (유효 n/대상)**. 실패는 0점으로 넣지 않음.', '',
-             '| 유형 | 모드 | Faithfulness | Answer relevancy | Context recall |',
-             '|:---|:---|---:|---:|---:|']
+    lines = ['# 현재 LightRAG v4 · V4 벤치마크 Ragas 평가', '',
+             f"- 상태: **{summary['status']}** · 생성 {summary['generated_rows']}/{expected} · 채점 완료 {summary['complete_rows']}/{expected} · 유효 점수 {summary['valid_scores']}/{summary['expected_scores']}",
+             f"- 호출: `{config['pipeline']}` · `mix` · 전사 `allowedTeamIds=null` · Redis/native 답변 캐시 OFF.",
+             f"- 답변: `{config['model']}` · judge: `{config['judge_model']}` · 임베딩: `{config['embedding_model']}`.",
+             f"- 실제 옵션: `{json.dumps(config['params'], ensure_ascii=False)}`.",
+             '- 기존 200건 인덱스 재사용. 삽입·삭제·재색인 없음. 실제 v4 서비스 프롬프트/답변 모델 사용.',
+             '- 실제 문맥·프롬프트·답변·참조·오류·시간을 rows JSON에 보존. 정답/reference는 생성에 전달하지 않는다.', '',
+             '## 분류별 / split별 평균', '',
+             '| 범위 | Faithfulness | Answer relevancy | Context recall |', '|:---|---:|---:|---:|']
+    if summary['validation_status'] == 'source_changed':
+        lines[0] = '# 시작 시점 LightRAG v4 · V4 벤치마크 Ragas 평가'
+        lines[2:2] = ['> 실행 도중 소스 변경으로 종료 동일성 검증이 실패했다. 이 점수는 시작 시점 코드의 결과이며 **최신 코드 평가로 간주하지 않는다**.',
+                      '> 유료 답변/지표는 보존했다. 기존 계약을 바꾸거나 자동 유료 재실행하지 않았다.', '']
+    elif summary['validation_status'] not in ('passed', 'pending'):
+        lines[2:2] = ['> 종료 입력 동일성 검증 실패. run.json의 final_validation을 확인한다.', '']
+
     def label(case):
         return 'verified_absence' if case['answer_kind'] == 'verified_absence' else case['category']
-    def mean(values, n):
-        return f'{statistics.mean(values):.4f} ({len(values)}/{n})' if values else f'N/A (0/{n})'
-    categories = ['Overall', *dict.fromkeys(label(c) for c in cases)]
-    keyed = {(r['id'], r['mode']): r for r in rows}
-    for category in categories:
-        ids = {c['id'] for c in cases if category == 'Overall' or label(c) == category}
-        for mode in MODES:
-            group = [r for r in rows if r['id'] in ids and r['mode'] == mode]
-            cells = [category, mode]
-            for metric in REPORT_METRICS:
-                values = [r['scores'][metric] for r in group if r.get('scores', {}).get(metric) is not None]
-                cells.append(mean(values, len(ids)))
-            lines.append('| '+' | '.join(cells)+' |')
-    lines += ['', '## Split means', '',
-              '| Split | Mode | Faithfulness | Answer relevancy | Context recall |',
-              '|:---|:---|---:|---:|---:|']
-    for split in ('development', 'evaluation'):
-        ids = {c['id'] for c in cases if c['split'] == split}
-        for mode in MODES:
-            group = [r for r in rows if r['id'] in ids and r['mode'] == mode]
-            cells = [split, mode]
-            for metric in REPORT_METRICS:
-                values = [r['scores'][metric] for r in group if r.get('scores', {}).get(metric) is not None]
-                cells.append(mean(values, len(ids)))
-            lines.append('| '+' | '.join(cells)+' |')
-    lines += ['', '## 대응 문항 차이: Mix − Naive', '',
-              '| 유형 | 지표 | 평균 차이 | 대응 n |', '|:---|:---|---:|---:|']
-    for category in categories:
-        for metric in REPORT_METRICS:
-            diffs = []
-            for case in cases:
-                if category != 'Overall' and label(case) != category:
-                    continue
-                a = keyed.get((case['id'], 'naive'), {}).get('scores', {}).get(metric)
-                b = keyed.get((case['id'], 'mix'), {}).get('scores', {}).get(metric)
-                if a is not None and b is not None:
-                    diffs.append(b-a)
-            value = f'{statistics.mean(diffs):+.4f}' if diffs else 'N/A'
-            lines.append(f'| {category} | {metric} | {value} | {len(diffs)} |')
-    lines += ['', '## 시간과 오류', '', '| 모드 | 검색 평균 초 (n) | 검색+생성 평균 초 (n) |', '|:---|---:|---:|']
-    for mode in MODES:
-        group = [r for r in rows if r['mode'] == mode and 'response' in r]
-        lines.append('| '+mode+' | '+' | '.join(mean([r[k] for r in group if k in r], 50) for k in ('retrieval_seconds', 'total_seconds'))+' |')
-    lines += ['', f"- 생성 오류: {summary['generation_errors']}, 주평가 채점 오류: {summary['score_errors']}. 상세는 각 rows JSON의 오류 필드 확인.",
-              '- API 대기/재시도/캐시가 시간에 영향을 준다. 운영 HTTP 지연 또는 순수 검색 엔진 성능이 아니다.',
-              '', '## 해석 범위와 제한', '',
-              '- Six verified-absence cases have answerable=true and are not abstention cases; report them separately.',
-              '- Context Precision 제외: 본문 청크만 채점하면 Neo4j 엔티티·관계가 빠지고, 전체 문맥을 개별 레코드로 채점하면 엔티티·관계·청크의 단위 차이와 유형별 직렬화 순서가 점수를 왜곡한다. 어느 쪽도 그래프 관계·방향·경로 정확도를 대표하지 않는다.',
-              f'- 제외된 탐색 지표의 원점수는 행 JSON에 보존했다. 전체 문맥 Context Precision은 {rescored}/100건만 재채점됐으며 주평가·모드 비교에서 제외한다.',
-              '- Factual Correctness 제외: 짧은 reference와 이름/ID 표기 차이로 실제 정답과 점수가 어긋날 수 있다. 원점수만 보존하며 정답률로 해석하지 않는다.',
-              '- 주평가 3지표도 그래프 정답 여부를 직접 판정하지 않는다. 시작 업무 식별, 관계/경로, 최종 집합, 부재의 structured_gold 채점은 아직 수행하지 않았다.',
-              '- Naive 본문과 Mix 그래프의 정보량이 다르므로 시스템 구성 비교이며 그래프 구조만의 효과가 아니다.',
-              '- Development/evaluation each contain 25 cases and relation components do not cross splits.',
-              '- Unique starting-task identification for paraphrased questions has not been independently human-reviewed.',
-              '- Fifty questions derive from V2 and reuse the same synthetic corpus; this is not independent holdout evidence.',
-              '- Questions omit task IDs and jointly test starting-task identification and relationship traversal; related cases are not 50 independent samples.',
-              '- 전체 탐색/관계 부재는 원천 200건의 유도 부분그래프 범위. 운영 전체/권한/실시간 상태/분기·순환 성능은 평가하지 않는다.',
-              '- 1회 채점으로 judge 변동성/신뢰구간을 측정하지 않았다. 단일 전체 평균으로 유형 차이를 숨기지 않는다.',
-              '- 로컬 200건 원문·처리 상태 해시를 검증한다. 외부 Neo4j/Qdrant 무결성은 별도 preflight 증거가 필요하다.',
-              '- 생성에는 질문과 검색 문맥만 사용한다. reference와 validation-details의 gold는 검색/생성에 주입하지 않는다.']
+
+    groups = [('Overall', {c['id'] for c in cases})]
+    groups += [(category, {c['id'] for c in cases if label(c) == category}) for category in dict.fromkeys(label(c) for c in cases)]
+    groups += [(split, {c['id'] for c in cases if c['split'] == split}) for split in ('development', 'evaluation')]
+    summary['groups'] = {}
+    for name, ids in groups:
+        cells, values_by_metric = [name], {}
+        for metric in METRICS:
+            values = [r['scores'][metric] for r in rows if r['id'] in ids and valid_score(r.get('scores', {}).get(metric))]
+            mean = statistics.mean(values) if values else None
+            values_by_metric[metric] = {'mean': mean, 'n': len(values), 'expected': len(ids)}
+            cells.append(f'{mean:.4f} ({len(values)}/{len(ids)})' if values else f'N/A (0/{len(ids)})')
+        summary['groups'][name] = values_by_metric
+        lines.append('| '+' | '.join(cells)+' |')
+    lines += ['', '## 시간과 오류', '']
+    for key in ('retrieval_seconds', 'total_seconds'):
+        values = [r[key] for r in rows if key in r]
+        lines.append(f'- {key}: {statistics.mean(values):.3f}초 (n={len(values)})' if values else f'- {key}: N/A')
+    lines += [f"- 생성 오류 {summary['generation_errors']}건, 채점 오류 {summary['score_errors']}건. 실패는 0점으로 넣지 않는다.", '',
+              '## 해석 범위와 제한', '',
+              '- Context Precision/Factual Correctness는 채점하지 않는다. 그래프 문맥 단위와 이름/ID 표기 차이로 기존 점수도 확정 정답률은 아니다.',
+              '- 6개 관계 부재 문항은 답변 가능한 빈 목록 정답이며 verified_absence로 별도 집계한다.',
+              '- 주평가도 그래프 경로/방향/집합의 결정적 판정은 아니다. structured_gold는 생성에 사용하지 않는다.',
+              '- 합성 200건에서 파생한 50문항으로 독립 holdout이 아니다. development/evaluation 각 25문항을 구분한다.',
+              '- 전사 normal query만 평가. 팀 권한/SSE/운영 전체 데이터는 검증하지 않는다.',
+              '- 이전 v3와 프롬프트·모델·인덱스·파이프라인이 다를 수 있어 전체 시스템 비교이며 개별 변경의 인과 효과가 아니다.',
+              '- 지연에는 모델 호출/재시도가 포함된다. judge 1회 채점으로 변동성/신뢰구간은 측정하지 않았다.',
+              '- v4 adapter는 생성 token 사용량을 반환하지 않으므로 generation_usage=null. 정확한 비용은 provider 청구 내역에서 확인한다.']
     (output/'report.md').write_text('\n'.join(lines)+'\n', encoding='utf-8')
     base.save(output/'summary.json', summary)
     return summary
 
 
+async def finalize_run(output: Path, meta: dict, settings, cases: list[dict]) -> None:
+    """Persist final input verification failures as well as successful completion."""
+    final = None
+    try:
+        final = contract(settings, output)
+        final['preflight']['external'] = await verify_external_index(settings)
+        check_contract(meta, final)
+    except Exception as exc:
+        validation = {'status': 'failed', 'error': base.safe_error(exc, 'final_validation')}
+        if final is not None and 'external' in final['preflight']:
+            old = meta['contract']
+            validation.update(
+                status='source_changed' if old['hashes'] != final['hashes'] else 'inputs_changed',
+                changed_source_files=sorted(k for k in set(old['hashes']) | set(final['hashes'])
+                                            if old['hashes'].get(k) != final['hashes'].get(k)),
+                index_unchanged=old['preflight'] == final['preflight'],
+            )
+        meta['final_validation'] = validation
+        base.save(output/'run.json', meta)
+        report(output, meta, cases)
+        raise
+    meta['finished_at'] = datetime.now(timezone.utc).isoformat()
+    meta['index_unchanged'] = True
+    meta['final_validation'] = {'status': 'passed', 'index_unchanged': True}
+    base.save(output/'run.json', meta)
+    report(output, meta, cases)
+
+
 async def main(args) -> None:
-    """Run all 100 pairs or regenerate the saved report without importing API SDKs."""
+    """Run/resume 50 current v4 mix queries, or report offline without paid calls."""
     output = (base.ROOT/args.output).resolve()
     if not output.is_relative_to(HERE) or output == HERE:
-        raise ValueError('Output must be a child of evaluation/v3')
+        raise ValueError('Output must be a child of evaluation/v4')
     cases = load_cases()
     if args.report_only:
         meta = base.read(output/'run.json')
@@ -262,20 +392,8 @@ async def main(args) -> None:
     from dotenv import load_dotenv
     load_dotenv(base.AI/'.env', override=True)
     from app.config.settings import settings
-    if os.environ.get('RERANK_EVAL_DOCKER_NETWORK') == '1':
-        settings = settings.model_copy(update={
-            'neo4j_uri': 'bolt://axwms-neo4j:7687',
-            'lightrag_qdrant_url': 'http://axwms-qdrant:6333',
-            'lightrag_rerank_binding_host': 'http://reranker/rerank',
-        })
-    from google import genai
-    from openai import AsyncOpenAI
-    from ragas.llms import llm_factory
-    from ragas.embeddings import GoogleEmbeddings
-    from ragas.metrics.collections import Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall, FactualCorrectness
     current = contract(settings, output)
-    current['benchmark_version'] = 'v4'
-    current['row_id_prefix'] = 'v4'
+    current['preflight']['external'] = await verify_external_index(settings)
     output.mkdir(parents=True, exist_ok=True)
     (output/'rows').mkdir(exist_ok=True)
     if (output/'run.json').exists():
@@ -286,42 +404,47 @@ async def main(args) -> None:
             raise ValueError('Rows exist without resume metadata')
         meta = dict(started_at=datetime.now(timezone.utc).isoformat(), contract=current)
         base.save(output/'run.json', meta)
+    base.save(output/'index-preflight.json', current['preflight'])
     read_rows(output, cases)
+    from google import genai
+    from openai import AsyncOpenAI
+    from ragas.llms import llm_factory
+    from ragas.embeddings import GoogleEmbeddings
+    from ragas.metrics.collections import Faithfulness, AnswerRelevancy, ContextRecall
     key = settings.gemini_api_key_candidates[0]
     client = genai.Client(api_key=key)
     judge_client = AsyncOpenAI(api_key=key, base_url='https://generativelanguage.googleapis.com/v1beta/openai/', timeout=120, max_retries=2)
-    judge = llm_factory(current['judge_model'], provider='openai', client=judge_client, temperature=0, max_tokens=8192)
-    embeddings = GoogleEmbeddings(client=client, model=current['embedding_model'])
-    metrics = dict(faithfulness=Faithfulness(llm=judge), answer_relevancy=AnswerRelevancy(llm=judge, embeddings=embeddings),
-                   context_precision_chunks=ContextPrecision(llm=judge), context_recall=ContextRecall(llm=judge))
-    factual = FactualCorrectness(llm=judge, mode='f1', atomicity='high', coverage='high')
-    rag = None
+    adapter = build_adapter(settings)
     try:
-        rag = await base.setup_rag(settings.model_copy(update={'lightrag_llm_fallback_models': ''}))
+        judge = llm_factory(current['judge_model'], provider='openai', client=judge_client, temperature=0, max_tokens=8192)
+        embeddings = GoogleEmbeddings(client=client, model=current['embedding_model'])
+        metrics = dict(faithfulness=Faithfulness(llm=judge), answer_relevancy=AnswerRelevancy(llm=judge, embeddings=embeddings),
+                       context_recall=ContextRecall(llm=judge))
+        service = build_service(settings, adapter)
         for i, case in enumerate(cases):
             for mode in (MODES if i % 2 == 0 else tuple(reversed(MODES))):
                 path = output/'rows'/f"{case['id']}--{mode}.json"
-                row = base.read(path) if path.exists() else {**case, 'mode': mode, 'features': FLAGS}
+                row = base.read(path) if path.exists() else {**case, 'mode': mode}
                 if row_complete(row):
                     continue
                 if 'response' not in row:
                     for attempt in range(2):
                         try:
-                            row.update(await base.retrieve_generate(rag, client, current['model'], generation_case(case), mode))
+                            row.update(await retrieve_generate(adapter, service, generation_case(case)))
                             expected = set(case['expected_worklog_ids'])
                             row['id_recall'] = len(expected & set(row['retrieved_worklog_ids']))/len(expected) if expected else None
                             row.pop('generation_error', None)
                             base.save(path, row)
                             break
                         except Exception as exc:
-                            row['generation_error'] = base.safe_error(exc, 'retrieval_generation')
+                            row['generation_error'] = generation_error(exc)
                             base.save(path, row)
                             if quota_exhausted(row):
                                 raise RuntimeError('Billing exhausted; saved rows can be resumed') from None
                             if attempt == 0:
                                 await asyncio.sleep(3)
                 if 'response' in row:
-                    await score_row(row, judge, metrics, factual)
+                    await score_row(row, path, judge, metrics)
                     base.save(path, row)
                 print('DONE', case['id'], mode, json.dumps(row.get('scores', {})), flush=True)
                 report(output, meta, cases)
@@ -329,16 +452,16 @@ async def main(args) -> None:
                     raise RuntimeError('Billing exhausted; saved rows can be resumed')
     finally:
         report(output, meta, cases)
-        if rag is not None:
-            await rag.finalize_storages()
+        await adapter.close()
         await judge_client.close()
         await client.aio.aclose()
     if report(output, meta, cases)['status'] != 'complete':
         raise RuntimeError('Incomplete rows remain; rerun the same command to resume')
+    await finalize_run(output, meta, settings, cases)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', default='docs/ai/evaluation/v4/results-ragas-reranker-v4-bongsoo-20260930')
+    parser.add_argument('--output', default='docs/ai/evaluation/v4/results-current-v4-' + datetime.now(timezone.utc).strftime('%Y%m%d'))
     parser.add_argument('--report-only', action='store_true')
     asyncio.run(main(parser.parse_args()))
