@@ -3,6 +3,7 @@
 Run from ai/: python -m benchmarks.semantic_cache_real_embedding run
 Requires a dedicated Redis 8 instance at redis://127.0.0.1:6388/0.
 Never points this script at the configured/shared Redis URL.
+Measures all-team (allowedTeamIds=null) cache only; team-scoped cache is bypassed in v4.
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ from redis.asyncio import Redis
 
 from app.client.gemini_client import GeminiClient
 from app.config.settings import settings
-from app.light.v3.model.worklog_query import WorklogLightQueryResponse
-from app.light.v3.router.worklog_query import get_worklog_query_service, router
-from app.light.v3.service.worklog_query_cache import WorklogQueryCache
-from app.light.v3.service.worklog_query_service import LightWorklogQueryService
+from app.light.v4.model.worklog_query import WorklogLightQueryResponse
+from app.light.v4.router.worklog_query import get_worklog_query_service, router
+from app.light.v4.service.worklog_query_cache import WorklogQueryCache
+from app.light.v4.service.worklog_query_service import LightWorklogQueryService
 
 
 REDIS_URL = "redis://127.0.0.1:6388/0"
@@ -141,7 +142,7 @@ async def run() -> None:
             raise RuntimeError("query pair does not meet the 0.90 similarity threshold")
 
         cache = WorklogQueryCache(settings_obj=settings, client=redis)
-        scope = cache.scope_key([1])
+        scope = cache.scope_key(None)
         def signature(query: str) -> str:
             return cache.signature(query, top_k=settings.lightrag_query_top_k,
                 chunk_top_k=settings.lightrag_query_chunk_top_k,
@@ -174,8 +175,8 @@ async def run() -> None:
             headers = {"x-ai-internal-token": token}
             async def request(query: str) -> float:
                 start = time.perf_counter_ns()
-                response = await client.post(BASE_URL + "/ai/light/worklogs-v3/query",
-                                             json={"query": query, "allowedTeamIds": [1]}, headers=headers)
+                response = await client.post(BASE_URL + "/ai/light/worklogs-v4/query",
+                                             json={"query": query, "allowedTeamIds": None}, headers=headers)
                 elapsed = (time.perf_counter_ns() - start) / 1e6
                 response.raise_for_status()
                 validate_hit(response.json(), MARKER)

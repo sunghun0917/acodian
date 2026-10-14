@@ -14,8 +14,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config.settings import settings
-from app.light.v3.service.lightrag_adapter import close_lightrag_worklog_index_adapter
-from app.light.v3.service.taskgroup_search import apply_taskgroup_search_patch
+from app.light.v4.service.lightrag_adapter import close_lightrag_worklog_index_adapter
+from app.light.v4.service.taskgroup_search import apply_taskgroup_search_patch
+from app.light.v4.service.worklog_team_scope import close_lightrag_team_scope_adapter
 from app.router import api_router
 
 
@@ -25,7 +26,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        await close_lightrag_worklog_index_adapter()
+        try:
+            await close_lightrag_team_scope_adapter()
+        finally:
+            await close_lightrag_worklog_index_adapter()
 
 
 def create_app() -> FastAPI:
