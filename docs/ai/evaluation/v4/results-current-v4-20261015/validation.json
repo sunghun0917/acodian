@@ -1,0 +1,19 @@
+{
+  "status": "source_changed",
+  "index_unchanged": true,
+  "changed_source_files": [
+    "ai/app/light/v4/service/lightrag_adapter.py",
+    "ai/app/light/v4/service/worklog_query_cache.py",
+    "ai/app/light/v4/service/worklog_query_service.py",
+    "ai/app/light/v4/store/worklog_extraction_cache.py"
+  ],
+  "reason": "종료 계약 검증이 소스 해시 변경을 감지했다. 4개 파일 수정 시각은 첫 문항 완료 후이며, 실행 프로세스에 이미 import된 코드는 reload하지 않았다. 최신 코드 평가로 승격하지 않는다.",
+  "source_modified_at_utc": {
+    "ai/app/light/v4/service/lightrag_adapter.py": "2026-10-14T19:13:48.551586+00:00",
+    "ai/app/light/v4/service/worklog_query_cache.py": "2026-10-14T18:59:39.696214+00:00",
+    "ai/app/light/v4/service/worklog_query_service.py": "2026-10-14T19:01:04.007971+00:00",
+    "ai/app/light/v4/store/worklog_extraction_cache.py": "2026-10-14T19:09:32.888906+00:00"
+  },
+  "reporting_patch_after_run": true,
+  "recorded_at": "2026-10-14T19:40:54.827242+00:00"
+}
