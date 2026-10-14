@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     lightrag_graph_storage: str = "Neo4JStorage"
     lightrag_neo4j_database: str = "neo4j"
     gemini_api_keys: str = ""                            # 추가 Gemini 프로젝트 키 후보. comma-separated, 실제 키는 env로만 주입한다.
+    lightrag_answer_llm_model: str = ""                  # 최종 답변 전용. 비어 있으면 기존 LightRAG 모델 설정을 유지한다.
 
     model_config = SettingsConfigDict(
         # ai/.env 를 자동 로드한다 (없으면 위 기본값을 사용).
@@ -127,6 +128,12 @@ class Settings(BaseSettings):
             if model and model not in candidates:
                 candidates.append(model)
         return candidates
+
+    @property
+    def lightrag_answer_llm_model_candidates(self) -> list[str]:
+        """답변 모델을 별도로 지정하면 추출용 fallback을 암묵적으로 적용하지 않는다."""
+        answer_model = self.lightrag_answer_llm_model.strip()
+        return [answer_model] if answer_model else self.lightrag_llm_model_candidates
 
     @property
     def gemini_api_key_candidates(self) -> list[str]:

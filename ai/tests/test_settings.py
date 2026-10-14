@@ -7,6 +7,17 @@
 from app.config.settings import Settings, get_settings
 
 
+def test_answer_model_is_separate_and_blank_keeps_existing_candidates(monkeypatch):
+    monkeypatch.delenv("LIGHTRAG_ANSWER_LLM_MODEL", raising=False)
+    settings = Settings(_env_file=None, lightrag_llm_model="extract",
+                        lightrag_llm_fallback_models="fallback")
+    assert getattr(settings, "lightrag_answer_llm_model", None) == ""
+    assert settings.lightrag_answer_llm_model_candidates == ["extract", "fallback"]
+    settings.lightrag_answer_llm_model = "  answer  "
+    assert settings.lightrag_answer_llm_model_candidates == ["answer"]
+    assert settings.lightrag_llm_model_candidates == ["extract", "fallback"]
+
+
 def test_settings_has_embedding_defaults(monkeypatch) -> None:
     """기획서 2.4 / ERD 와 동기화된 기본값을 확인한다."""
     monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
