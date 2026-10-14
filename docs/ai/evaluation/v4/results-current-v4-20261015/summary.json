@@ -1,0 +1,149 @@
+{
+  "expected_rows": 50,
+  "generated_rows": 50,
+  "complete_rows": 50,
+  "expected_scores": 150,
+  "valid_scores": 150,
+  "generation_errors": 0,
+  "score_errors": 0,
+  "status": "complete",
+  "validation_status": "source_changed",
+  "groups": {
+    "Overall": {
+      "faithfulness": {
+        "mean": 0.7682142857142857,
+        "n": 50,
+        "expected": 50
+      },
+      "answer_relevancy": {
+        "mean": 0.8960937416618022,
+        "n": 50,
+        "expected": 50
+      },
+      "context_recall": {
+        "mean": 0.8616666666666667,
+        "n": 50,
+        "expected": 50
+      }
+    },
+    "simple_fact": {
+      "faithfulness": {
+        "mean": 0.8607142857142858,
+        "n": 10,
+        "expected": 10
+      },
+      "answer_relevancy": {
+        "mean": 0.9170267314113805,
+        "n": 10,
+        "expected": 10
+      },
+      "context_recall": {
+        "mean": 1.0,
+        "n": 10,
+        "expected": 10
+      }
+    },
+    "direct_relation": {
+      "faithfulness": {
+        "mean": 0.7415674603174603,
+        "n": 12,
+        "expected": 12
+      },
+      "answer_relevancy": {
+        "mean": 0.929201321953909,
+        "n": 12,
+        "expected": 12
+      },
+      "context_recall": {
+        "mean": 1.0,
+        "n": 12,
+        "expected": 12
+      }
+    },
+    "multi_relation": {
+      "faithfulness": {
+        "mean": 0.7336167800453515,
+        "n": 14,
+        "expected": 14
+      },
+      "answer_relevancy": {
+        "mean": 0.8953239760850078,
+        "n": 14,
+        "expected": 14
+      },
+      "context_recall": {
+        "mean": 0.6428571428571429,
+        "n": 14,
+        "expected": 14
+      }
+    },
+    "dependency_closure": {
+      "faithfulness": {
+        "mean": 0.7096230158730159,
+        "n": 8,
+        "expected": 8
+      },
+      "answer_relevancy": {
+        "mean": 0.8612869277808001,
+        "n": 8,
+        "expected": 8
+      },
+      "context_recall": {
+        "mean": 0.7604166666666666,
+        "n": 8,
+        "expected": 8
+      }
+    },
+    "verified_absence": {
+      "faithfulness": {
+        "mean": 0.8261904761904761,
+        "n": 6,
+        "expected": 6
+      },
+      "answer_relevancy": {
+        "mean": 0.8431954696821481,
+        "n": 6,
+        "expected": 6
+      },
+      "context_recall": {
+        "mean": 1.0,
+        "n": 6,
+        "expected": 6
+      }
+    },
+    "development": {
+      "faithfulness": {
+        "mean": 0.7941111111111111,
+        "n": 25,
+        "expected": 25
+      },
+      "answer_relevancy": {
+        "mean": 0.9075938742464217,
+        "n": 25,
+        "expected": 25
+      },
+      "context_recall": {
+        "mean": 0.8433333333333334,
+        "n": 25,
+        "expected": 25
+      }
+    },
+    "evaluation": {
+      "faithfulness": {
+        "mean": 0.7423174603174603,
+        "n": 25,
+        "expected": 25
+      },
+      "answer_relevancy": {
+        "mean": 0.8845936090771829,
+        "n": 25,
+        "expected": 25
+      },
+      "context_recall": {
+        "mean": 0.88,
+        "n": 25,
+        "expected": 25
+      }
+    }
+  }
+}
