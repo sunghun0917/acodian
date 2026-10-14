@@ -15,7 +15,8 @@ def test_scoped_adapter_retrieves_without_generation_and_completes_filtered_prom
         calls.append(("retrieve", query, param.mode))
         return {"status": "success", "data": {"chunks": []}}
 
-    async def llm_model_func(query, *, system_prompt, stream):
+    async def llm_model_func(query, *, system_prompt, stream, answer_generation):
+        assert answer_generation is True
         calls.append(("complete", query, system_prompt, stream))
         return "safe answer"
 

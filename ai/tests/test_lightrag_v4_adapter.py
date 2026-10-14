@@ -247,6 +247,7 @@ class FakeLightRAG:
         self.calls: list[Any] = []
         self.statuses = {}
         self.doc_status = SimpleNamespace(get_by_ids=self.get_statuses)
+        self.llm_response_cache = SimpleNamespace(workspace=kwargs.get("workspace", ""))
         FakeLightRAG.instances.append(self)
 
     async def get_statuses(self, ids):
@@ -287,6 +288,7 @@ class FakeQueryParam:
     chunk_top_k: int
     response_type: str
     enable_rerank: bool
+    model_func: Any = None
 
 
 def make_dependencies(
@@ -1477,3 +1479,15 @@ def test_indexed_source_rows_validate_scope_identity_schema_and_status(corruptio
         else:
             assert await adapter.read_source_rows([1, 99], expected_team_id=10) == {1: row}
     asyncio.run(run())
+
+
+def test_lightrag_adapter_wraps_llm_response_cache_with_validation() -> None:
+    from app.light.v4.store.worklog_extraction_cache import ValidatedWorklogExtractionCache
+
+    dependencies, _, _, _ = make_dependencies()
+    adapter = LightRagWorklogIndexAdapter(
+        settings_obj=make_settings(),
+        dependencies=dependencies,
+    )
+    rag = adapter._build_lightrag()
+    assert isinstance(rag.llm_response_cache, ValidatedWorklogExtractionCache)

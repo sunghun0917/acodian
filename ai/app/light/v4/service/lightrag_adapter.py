@@ -22,6 +22,8 @@ import aiohttp
 from pydantic import TypeAdapter
 
 from app.config.settings import Settings, settings
+from app.light.v4.chain.worklog_extraction import complete_body_extraction, is_body_extraction
+from app.light.v4.store.worklog_extraction_cache import ValidatedWorklogExtractionCache
 from app.light.v4.service.worklog_custom_kg_builder import LightRagWorklogCustomKgDocument
 from app.light.v4.service.worklog_document_builder import LightRagWorklogDocument
 from app.light.v4.store.worklog_source_store import LightWorklogSourceRow
@@ -398,9 +400,8 @@ class LightRagWorklogIndexAdapter:
     ) -> Any:
         """권한 확인을 마친 문맥으로만 Gemini 답변을 생성한다."""
         try:
-            rag = await self._get_initialized_rag()
             return await asyncio.wait_for(
-                rag.llm_model_func(query, system_prompt=system_prompt, stream=stream),
+                self._complete_answer(query, system_prompt=system_prompt, stream=stream),
                 timeout=self._settings.lightrag_query_timeout_seconds,
             )
         except LightRagProviderUnavailableError:
@@ -409,6 +410,11 @@ class LightRagWorklogIndexAdapter:
             raise LightRagQueryTimeoutError("LightRAG generation timed out") from exc
         except Exception as exc:
             raise LightRagQueryFailedError("LightRAG generation failed") from exc
+
+    async def _complete_answer(self, prompt: str, **kwargs: Any) -> Any:
+        """답변 호출에도 native LLM 동시성·타임아웃 제한을 유지한다."""
+        rag = await self._get_initialized_rag()
+        return await rag.llm_model_func(prompt, answer_generation=True, **kwargs)
 
     async def embed_query(self, query: str) -> list[float]:
         """현재 LightRAG embedding 모델로 캐시 검색용 query vector를 만든다."""
@@ -543,6 +549,9 @@ class LightRagWorklogIndexAdapter:
                 storage = getattr(rag, name)
                 storage.initialize = partial(initialize_worklog_team_vector_storage, storage, self._settings)
                 storage.finalize = partial(finalize_worklog_team_vector_storage, storage)
+        rag.llm_response_cache = ValidatedWorklogExtractionCache(
+            rag.llm_response_cache,
+        )
         return rag
 
     def _verify_storage_workspaces(self, rag: Any) -> None:
@@ -564,6 +573,9 @@ class LightRagWorklogIndexAdapter:
                 "Reranking is requested but LIGHTRAG_RERANK_BINDING_HOST is not configured"
             )
         dependencies = self._dependencies or _load_lightrag_dependencies()
+        async def answer_model_func(prompt: str, **kwargs: Any) -> Any:
+            return await self._complete_answer(prompt, **kwargs)
+
         return dependencies.query_param_class(
             mode="mix",
             stream=bool(options.stream),
@@ -574,6 +586,8 @@ class LightRagWorklogIndexAdapter:
             enable_rerank=(
                 bool(options.enable_rerank)
             ),
+            # 함수 closure는 native asdict가 adapter와 live storage 전체를 deepcopy하지 않는다.
+            model_func=answer_model_func,
         )
 
     def _rerank_endpoint_configured(self) -> bool:
@@ -699,14 +713,19 @@ def _build_gemini_llm_model_func(
     모든 key/attempt 소진 후 escape hatch로 사용한다. prompt/API key/raw 응답은 로그에 남기지 않는다.
     """
 
-    async def llm_model_func(
+    async def provider_complete(
         prompt: str,
         system_prompt: str | None = None,
         history_messages: list[dict[str, Any]] | None = None,
         keyword_extraction: bool = False,
+        answer_generation: bool = False,
         **kwargs: Any,
     ) -> str:
-        candidates = settings_obj.lightrag_llm_model_candidates
+        candidates = (settings_obj.lightrag_answer_llm_model_candidates if answer_generation
+                      else settings_obj.lightrag_llm_model_candidates)
+        if answer_generation:
+            # native Gemini helper의 전역 model_name이 별도 답변 모델을 덮어쓰지 않게 한다.
+            kwargs.pop("hashing_kv", None)
         key_candidates = settings_obj.gemini_api_key_candidates
         max_attempts = settings_obj.lightrag_query_llm_retry_attempts_per_model
         last_retryable_exc: BaseException | None = None
@@ -775,6 +794,30 @@ def _build_gemini_llm_model_func(
         raise LightRagProviderUnavailableError(
             "Gemini provider unavailable after LightRAG API key/model fallbacks"
         ) from last_retryable_exc
+
+    async def llm_model_func(
+        prompt: str,
+        system_prompt: str | None = None,
+        history_messages: list[dict[str, Any]] | None = None,
+        keyword_extraction: bool = False,
+        answer_generation: bool = False,
+        **kwargs: Any,
+    ) -> str:
+        if answer_generation and not keyword_extraction:
+            return await provider_complete(
+                prompt, system_prompt=system_prompt, history_messages=history_messages,
+                answer_generation=True, **kwargs,
+            )
+        if is_body_extraction(system_prompt, keyword_extraction):
+            return await complete_body_extraction(
+                provider_complete, prompt, history_messages=history_messages,
+                system_prompt=system_prompt,
+                keyword_extraction=False, **kwargs,
+            )
+        return await provider_complete(
+            prompt, system_prompt=system_prompt, history_messages=history_messages,
+            keyword_extraction=keyword_extraction, **kwargs,
+        )
 
     return llm_model_func
 
