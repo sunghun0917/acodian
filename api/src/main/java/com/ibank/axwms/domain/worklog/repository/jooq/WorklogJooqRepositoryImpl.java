@@ -329,11 +329,15 @@ public class WorklogJooqRepositoryImpl implements WorklogJooqRepository {
     }
 
     /**
-     * WorklogVisibilityScope 를 AI 서버 권한 필터용 팀 ID 목록으로 풀어낸다.
+     * 권한 범위 안에서 미삭제 업무가 있는 팀만 AI에 전달해 빈 팀의 미준비 workspace 조회를 피한다.
      */
     @Override
     public List<Long> findVisibleTeamIds(WorklogVisibilityScope scope) {
-        Condition condition = TB_TEAM.DELETED_AT.isNull().and(toTeamCondition(scope));
+        Condition condition = TB_TEAM.DELETED_AT.isNull().and(toTeamCondition(scope))
+                .and(DSL.exists(DSL.selectOne()
+                        .from(TB_WORKLOG)
+                        .where(TB_WORKLOG.TEAM_ID.eq(TB_TEAM.TEAM_ID))
+                        .and(TB_WORKLOG.IS_DELETED.isFalse())));
         return dsl.select(TB_TEAM.TEAM_ID)
                 .from(TB_TEAM)
                 .where(condition)

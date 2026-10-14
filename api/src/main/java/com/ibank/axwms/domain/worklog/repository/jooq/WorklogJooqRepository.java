@@ -78,7 +78,7 @@ public interface WorklogJooqRepository {
     List<WorklogSearchProjection> findSearchWorklogsByIds(WorklogVisibilityScope scope, List<Long> worklogIds);
 
     /**
-     * AI 서버에 넘길 수 있도록 현재 검색 가시 범위의 팀 ID 목록만 조회한다.
+     * AI 검색 전 권한 범위 안에서 미삭제 업무가 있는 팀만 반환하며 색인 완료 여부는 판단하지 않는다.
      */
     List<Long> findVisibleTeamIds(WorklogVisibilityScope scope);
 
