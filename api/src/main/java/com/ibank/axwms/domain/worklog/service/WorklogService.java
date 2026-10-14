@@ -113,7 +113,7 @@ public class WorklogService {
     /**
      * 로그인 사용자의 권한으로 업무를 등록한다.
      * 팀 존재 여부와 사용자의 해당 팀 소속 여부를 확인한 뒤 신규 Worklog 엔티티를 저장한다.
-     * 등록 트랜잭션 커밋 후에는 파일 요약, 본문 요약/태그 생성 파이프라인, Light v3 index 를 통합 후처리로 요청한다.
+     * 등록 트랜잭션 커밋 후에는 파일 요약, 본문 요약/태그 생성 파이프라인, Light v4 index 를 통합 후처리로 요청한다.
      *
      * @param principal 현재 로그인 사용자
      * @param request   업무 등록 요청 DTO

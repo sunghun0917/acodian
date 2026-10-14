@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 
 class LightRagWorklogSearchClientTest {
 
-    private static final String QUERY_PATH = "/ai/light/worklogs-v3/query";
+    private static final String QUERY_PATH = "/ai/light/worklogs-v4/query";
 
     private HttpServer server;
     private ExecutorService executorService;

@@ -14,19 +14,19 @@ import org.springframework.web.client.RestClientResponseException;
 import java.net.SocketTimeoutException;
 
 /**
- * API 서버의 업무일지 시맨틱 검색 요청을 AI 서버의 LightRAG v3 query API로 전달한다.
+ * API 서버의 업무일지 시맨틱 검색 요청을 AI 서버의 LightRAG v4 query API로 전달한다.
  */
 @Slf4j
 @Component
 public class LightRagWorklogSearchClient {
 
-    private static final String QUERY_WORKLOGS_PATH = "/light/worklogs-v3/query";
+    private static final String QUERY_WORKLOGS_PATH = "/light/worklogs-v4/query";
 
     private final RestClient restClient;
     private final String baseUrl;
     private final String internalToken;
 
-    /** 업무일지 시맨틱 검색 설정값으로 LightRAG v3 전용 RestClient를 구성한다. */
+    /** 업무일지 시맨틱 검색 설정값으로 LightRAG v4 전용 RestClient를 구성한다. */
     public LightRagWorklogSearchClient(AiWorklogSearchProperties properties) {
         this.baseUrl = properties.baseUrl();
         this.internalToken = properties.internalToken();
@@ -36,7 +36,7 @@ public class LightRagWorklogSearchClient {
                 .build();
     }
 
-    /** LightRAG v3 native answer와 references를 받아 semantic 검색 응답 조립 단계로 넘긴다. */
+    /** LightRAG v4 native answer와 references를 받아 semantic 검색 응답 조립 단계로 넘긴다. */
     public InternalLightRagWorklogQueryApiDto.Response queryWorklogs(
             InternalLightRagWorklogQueryApiDto.Request request
     ) {

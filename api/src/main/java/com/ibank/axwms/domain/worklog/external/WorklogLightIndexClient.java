@@ -7,14 +7,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 /**
- * AI 서버의 Light v3 업무일지 index endpoint 에 색인 요청을 전달한다.
+ * AI 서버의 Light v4 업무일지 index endpoint 에 색인 요청을 전달한다.
  */
 @Component
 public class WorklogLightIndexClient {
 
-    private static final String WORKLOG_LIGHT_INDEX_PATH = "/light/worklogs-v3/index";
-    private static final String WORKLOG_LIGHT_REINDEX_PATH = "/light/worklogs-v3/reindex";
-    private static final String WORKLOG_LIGHT_DELETE_PATH = "/light/worklogs-v3/delete";
+    private static final String WORKLOG_LIGHT_INDEX_PATH = "/light/worklogs-v4/index";
+    private static final String WORKLOG_LIGHT_REINDEX_PATH = "/light/worklogs-v4/reindex";
+    private static final String WORKLOG_LIGHT_DELETE_PATH = "/light/worklogs-v4/delete";
 
     private final RestClient restClient;
     private final String internalToken;
@@ -45,10 +45,14 @@ public class WorklogLightIndexClient {
         }
     }
 
-    /** HTTP 성공이어도 ID별 색인 실패나 결과 누락이면 후처리 실패로 전달한다. */
+    /** 내부 토큰을 필수로 전송하고 HTTP 성공이어도 ID별 색인 실패나 누락은 후처리 실패로 전달한다. */
     public void requestIndex(TriggerWorklogLightIndexDto.Request request) {
+        if (internalToken == null || internalToken.isBlank()) {
+            throw new IllegalStateException("AI 내부 토큰이 없어 업무일지 색인을 요청할 수 없습니다");
+        }
         TriggerWorklogLightIndexDto.Response response = restClient.post()
                 .uri(WORKLOG_LIGHT_INDEX_PATH)
+                .header("X-AI-Internal-Token", internalToken)
                 .body(request)
                 .retrieve()
                 .body(TriggerWorklogLightIndexDto.Response.class);

@@ -17,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * LightRAG v3 query API 응답을 업무일지 시맨틱 검색 응답으로 연결하는 서비스다.
+ * LightRAG v4 query API 응답을 업무일지 시맨틱 검색 응답으로 연결하는 서비스다.
  */
 @Service
 @RequiredArgsConstructor
@@ -53,7 +53,7 @@ public class LightRagWorklogSearchService {
     }
 
     /**
-     * DIRECTOR 전체 범위는 null로 열어 두고, 나머지 역할은 실제 접근 가능한 팀 ID 목록으로 제한한다.
+     * DIRECTOR는 전사 인덱스를 사용하고, 팀 제한 검색은 기존 권한 조회에서 업무가 없는 팀을 제외한다.
      */
     private List<Long> resolveAllowedTeamIds(WorklogVisibilityScope scope) {
         return switch (scope) {
