@@ -112,7 +112,10 @@ ai/
 | `app/prompt/tag_merge_prompt.py` | 태그 병합 후보 |
 | `app/chain/tag_merge_chain.py` | 태그 병합 후보 |
 | `app/service/tag_merge_service.py` | 태그 병합 후보 |
-| `app/light/v3/**` | LightRAG v3 업무일지 index/search |
+| `app/light/v3/**` | 보존된 LightRAG v3 구현 — 현재 서버 라우터에는 등록하지 않음 |
+| `app/light/v4/**` | 활성 LightRAG v4 업무일지 query/index API |
+| `app/light/v4/service/worklog_team_scope.py`, `tests/test_light_worklog_team_scope.py` | 팀 workspace 검색 사전 격리와 snapshot 문맥 조회 |
+| `app/light/v4/store/worklog_custom_kg_tracking.py`, `tests/test_light_worklog_custom_kg_tracking.py` | 확정 KG 문서 삭제 추적·공유 노드 복원 |
 
 ## 공유 파일과 수정 규칙
 
