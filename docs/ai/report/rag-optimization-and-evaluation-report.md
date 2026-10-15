@@ -130,18 +130,20 @@ xychart-beta
 - **평가 판정 모델 (Judge)**: `gemini-3.8-flash`
 - **Reranker 모델**: `bongsoo/klue-cross-encoder-v1` (HuggingFace TEI 컨테이너)
 
-### 4.2 모드별 종합 성능 비교 (Naive vs Mix vs Mix+Reranker)
+### 4.2 모드별 종합 성능 비교 (Naive vs Mix vs Mix+Reranker vs app.light.v4)
 
-| 평가 지표 (0.0 ~ 1.0) | Naive Baseline | LightRAG Mix Baseline | **LightRAG Mix + Reranker** | **Reranker 개선폭 (Δ)** |
-| :--- | :---: | :---: | :---: | :---: |
-| **Main Overall (44문항)** | | | | |
-| ├ **Faithfulness (근거 충실도)** | 0.9110 | **0.9396** | 0.8920 | -0.0476p |
-| ├ **Answer Relevancy (답변 관련성)** | 0.3015 | 0.8316 | **0.8496** | **+0.0180p 🚀** |
-| └ **Context Recall (문맥 재현율)** | 0.3580 | 0.6307 | **0.6572** | **+0.0265p 🚀** |
-| **전체 Overall (50문항, 부재 포함)** | | | | |
-| ├ Faithfulness | **0.9217** | 0.9152 | 0.8717 | -0.0435p |
-| ├ Answer Relevancy | 0.2826 | 0.7665 | **0.8116** | **+0.0451p 🚀** |
-| └ Context Recall | 0.3950 | 0.6750 | **0.6983** | **+0.0233p 🚀** |
+| 평가 지표 (0.0 ~ 1.0) | Naive Baseline | LightRAG Mix Baseline | LightRAG Mix + Reranker | **app.light.v4 (10/15)** | Reranker 개선폭 (Mix 대비) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Main Overall (44문항)** | | | | | |
+| **Faithfulness (근거 충실성)** | 0.9110 | **0.9396** | 0.8920 | 0.7603 | -0.0476p |
+| **Answer Relevancy (응답 관련성)** | 0.3015 | 0.8316 | **0.8496** | **0.9033** | **+0.0180p** |
+| **Context Recall (문맥 회수율)** | 0.3580 | 0.6307 | **0.6572** | **0.8428** | **+0.0265p** |
+| **전체 Overall (50문항, 부재 포함)** | | | | | |
+| **Faithfulness** | **0.9217** | 0.9152 | 0.8717 | 0.7682 | -0.0435p |
+| **Answer Relevancy** | 0.2826 | 0.7665 | **0.8116** | **0.8961** | **+0.0451p** |
+| **Context Recall** | 0.3950 | 0.6750 | 0.6983 | **0.8617** | **+0.0233p** |
+
+`app.light.v4` 결과는 v3 adapter 기반 이전 평가와 파이프라인·모델·검색 설정이 달라 통제된 A/B 비교가 아니다. 실행 중 소스 변경이 확인된 `source_changed` 결과이므로 시작 시점 코드 기준으로 표시했으며 최신 작업 트리 전체의 측정값은 아니다. Reranker 개선폭 열은 기존 Mix와 Reranker 간 차이만 나타낸다.
 
 ### 4.3 문항 유형별 심층 분석
 
