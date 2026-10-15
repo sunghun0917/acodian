@@ -1,44 +1,81 @@
-# Web E2E 실행 안내
+# Web E2E 테스트 실행 가이드 (Playwright)
 
-`pnpm e2e`와 `pnpm e2e:ui`는 별도 mock 명령으로 분기하지 않고 실제 API 서버를 호출한다.
+> **핵심 안내**: `web/e2e` 테스트는 가상 Mock 데이터가 아닌 **실제 구동 중인 백엔드 API 서버를 직접 호출**하여 브라우저 수준의 종단 간(End-to-End) 사용자 경험과 권한 흐름을 검증합니다.
 
-## 필수 환경변수
+---
 
-- `NEXT_PUBLIC_API_BASE_URL`: 브라우저가 호출할 API base URL. 예: `https://k14s209.p.ssafy.io:8443/api`
-- `WEB_E2E_DIRECTOR_EMAIL`, `WEB_E2E_DIRECTOR_PASSWORD`
-- `WEB_E2E_DEPT_HEAD_EMAIL`, `WEB_E2E_DEPT_HEAD_PASSWORD`
-- `WEB_E2E_TEAM_LEAD_EMAIL`, `WEB_E2E_TEAM_LEAD_PASSWORD`
-- `WEB_E2E_MEMBER_EMAIL`, `WEB_E2E_MEMBER_PASSWORD`
+## 🔑 1. 필수 환경변수 설정
 
-이메일은 기본 iBank dummy 계정을 기본값으로 사용하지만, 비밀번호는 저장소에 커밋하지 말고 로컬 `.env` 또는 CI secret으로 주입한다.
+E2E 실행 전 로컬 `.env` 파일 또는 CI Secret에 아래 환경변수가 반드시 설정되어 있어야 합니다:
 
-## 데이터 정책
+```bash
+# 브라우저가 호출할 API 서버 Base URL
+NEXT_PUBLIC_API_BASE_URL="https://k14s209.p.ssafy.io:8443/api"
 
-- 테스트는 실제 원격 서버 상태를 전제로 하므로 mock fixture 문자열에 의존하지 않는다.
-- 서버 데이터가 없을 수 있는 목록/다운로드/병합 후보는 empty state 또는 `test.skip`으로 분리한다.
-- 원격 서버 데이터를 파괴할 수 있는 병합, 전체 읽음, 기존 조직/팀/업무 수정은 기본 E2E에서 수행하지 않는다.
-- 생성/수정 mutation이 필요한 테스트를 추가할 때는 `E2E_${Date.now()}_${test.info().parallelIndex}` 같은 unique marker와 cleanup 경로를 함께 둔다.
+# 권한별 테스트 계정 인증정보 (기본 iBank 더미 계정 규격)
+WEB_E2E_DIRECTOR_EMAIL="director@example.com"
+WEB_E2E_DIRECTOR_PASSWORD="******"
 
-## 로컬 실행
+WEB_E2E_DEPT_HEAD_EMAIL="dept_head@example.com"
+WEB_E2E_DEPT_HEAD_PASSWORD="******"
+
+WEB_E2E_TEAM_LEAD_EMAIL="team_lead@example.com"
+WEB_E2E_TEAM_LEAD_PASSWORD="******"
+
+WEB_E2E_MEMBER_EMAIL="member@example.com"
+WEB_E2E_MEMBER_PASSWORD="******"
+```
+
+> [!CAUTION]
+> 비밀번호 등 실제 인증 자격증명은 저장소에 절대 커밋하지 마세요.
+
+---
+
+## 🛡️ 2. 데이터 격리 및 테스트 정책
+
+- **실제 서버 상태 전제**: 인위적인 Mock fixture 문자열에 의존하지 않고 실제 백엔드 응답을 검증합니다.
+- **파괴적 작업 금지**: 기존 조직/팀/업무일지 수정, 데이터 병합, 일괄 읽음 처리 등 원격 서버 데이터를 오염시키는 동작은 기본 E2E에서 일체 수행하지 않습니다.
+- **빈 상태(Empty State) 허용**: 서버 데이터가 비어 있을 수 있는 목록/다운로드/병합 후보 항목은 empty state 처리 또는 `test.skip`으로 격리합니다.
+- **신규 Mutation 규칙**: 데이터 생성이 불가피한 테스트의 경우 `E2E_${Date.now()}_${test.info().parallelIndex}` 형태의 고유 마커를 부여하고 완료 후 즉시 cleanup하도록 작성합니다.
+
+---
+
+## 🚀 3. 로컬 테스트 실행
+
+Playwright가 로컬 Next.js 개발 서버(`127.0.0.1`)를 자동으로 실행하며, 실행 중에만 `NEXT_PUBLIC_E2E_AUTH_BOOTSTRAP=1`이 자동 주입됩니다.
 
 ```bash
 cd web
+
+# 1. 헤드리스 모드로 Chromium E2E 전체 실행
 pnpm e2e --project=chromium
+
+# 2. 대화형 UI Mode 실행 (Action Snapshot 확인용 --trace on 자동 적용)
 pnpm e2e:ui
 ```
 
-`pnpm e2e:ui`는 UI Mode에서도 성공 테스트의 action snapshot을 볼 수 있도록 `--trace on`을 함께 사용한다. 이미 UI Mode 창을 띄워둔 상태라면 기존 프로세스를 종료한 뒤 다시 실행한다.
+*(※ 이미 실행 중인 별도 개발 서버를 사용하려면 `WEB_E2E_BASE_URL` 환경변수를 지정하세요.)*
 
-로컬 Next dev server는 Playwright가 자동으로 실행하며 기본 host는 IPv4 `127.0.0.1`이다. 이미 다른 dev server를 쓰려면 `WEB_E2E_BASE_URL`을 지정한다. 보호 라우트 검증을 위해 Playwright 실행 중에만 `NEXT_PUBLIC_E2E_AUTH_BOOTSTRAP=1`이 dev server에 주입된다.
+---
 
-## UI Mode / trace 확인
+## 🔍 4. UI Mode 및 Trace 디버깅 팁
 
-UI Mode에서 오른쪽 `After`가 `about:blank`로 보이면 먼저 UI Mode를 `pnpm e2e:ui`로 다시 실행했는지 확인한다. 그 다음 왼쪽 테스트 전체나 가운데 `Passed` 요약 행이 아니라 `page.goto`, `click`, `expect` 같은 개별 action을 선택한다. 개별 action에도 스냅샷이 없으면 다음 명령으로 trace를 남겨 HTML report에서 다시 확인한다.
+### Q. UI Mode에서 화면 오른쪽 `After` 스냅샷이 `about:blank`로 보일 때
+1. UI Mode 창을 닫고 `pnpm e2e:ui`로 다시 실행했는지 확인합니다.
+2. 왼쪽 테스트 목록 전체나 가운데 `Passed` 요약 행이 아니라, **`page.goto`, `click`, `expect` 같은 개별 Action 항목을 직접 클릭**하세요.
+
+### 📊 HTML Trace Report 생성 및 분석
+개별 액션 스냅샷을 브라우저 리포트로 정밀 분석하고 싶을 때:
 
 ```bash
 cd web
+
+# Trace를 포함하여 테스트 실행
 pnpm e2e:trace --project=chromium
+
+# 브라우저에서 인터랙티브 HTML Report 열기
 pnpm e2e:report
 ```
 
-기본 설정은 UI Mode 디버깅을 우선해 성공 테스트도 trace를 남기는 `WEB_E2E_TRACE=on`이다. trace 파일 생성을 줄이고 싶을 때만 `WEB_E2E_TRACE=retain-on-failure pnpm e2e --project=chromium`을 사용한다. 커밋된 E2E 테스트에는 `page.pause()`를 두지 않고, 일시 디버깅이 필요할 때만 로컬에서 `pnpm exec playwright test --debug` 또는 임시 `page.pause()`를 사용한다.
+- **Trace 용량 최적화**: 디스크 용량을 아끼려면 실패한 테스트에만 trace를 남기는 `WEB_E2E_TRACE=retain-on-failure pnpm e2e --project=chromium`을 사용합니다.
+- **디버깅 규칙**: 커밋되는 코드에는 `page.pause()`를 절대 남기지 않으며, 로컬 디버깅 시에만 `pnpm exec playwright test --debug` 또는 임시 `page.pause()`를 사용합니다.
