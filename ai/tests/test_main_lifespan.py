@@ -20,3 +20,20 @@ def test_app_lifespan_closes_lightrag_adapter(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert close_calls == ["closed"]
+
+
+def test_app_lifespan_initializes_tracing_and_flushes_after_storage_error(monkeypatch):
+    import pytest
+
+    events = []
+    monkeypatch.setattr(main, "initialize_langfuse", lambda: events.append("initialize"), raising=False)
+    monkeypatch.setattr(main, "flush_langfuse", lambda: events.append("flush"), raising=False)
+
+    async def fail_close():
+        raise RuntimeError("storage close failed")
+
+    monkeypatch.setattr(main, "close_lightrag_worklog_index_adapter", fail_close)
+    with pytest.raises(RuntimeError, match="storage close failed"):
+        with TestClient(main.create_app()) as client:
+            assert client.get("/ai/health").status_code == 200
+    assert events == ["initialize", "flush"]
