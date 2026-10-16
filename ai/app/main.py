@@ -8,12 +8,14 @@
   운영 진단이 필요하면 인증된 내부 경로로만 임시 활성화한다.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.config.settings import settings
+from app.client.langfuse_client import flush_langfuse, initialize_langfuse
 from app.light.v4.service.lightrag_adapter import close_lightrag_worklog_index_adapter
 from app.light.v4.service.taskgroup_search import apply_taskgroup_search_patch
 from app.light.v4.service.worklog_team_scope import close_lightrag_team_scope_adapter
@@ -22,14 +24,18 @@ from app.router import api_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """FastAPI 종료 시 LightRAG storage lifecycle을 정리한다."""
+    """관측을 초기화하고 종료 시 storage 정리 후 대기 중인 trace를 전송한다."""
+    initialize_langfuse()
     try:
         yield
     finally:
         try:
-            await close_lightrag_team_scope_adapter()
+            try:
+                await close_lightrag_team_scope_adapter()
+            finally:
+                await close_lightrag_worklog_index_adapter()
         finally:
-            await close_lightrag_worklog_index_adapter()
+            await asyncio.to_thread(flush_langfuse)
 
 
 def create_app() -> FastAPI:

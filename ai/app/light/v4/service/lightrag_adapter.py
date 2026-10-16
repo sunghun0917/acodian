@@ -22,6 +22,7 @@ import aiohttp
 from pydantic import TypeAdapter
 
 from app.config.settings import Settings, settings
+from app.client.langfuse_client import configure_lightrag_tracing, restore_lightrag_context
 from app.light.v4.chain.worklog_extraction import complete_body_extraction, is_body_extraction
 from app.light.v4.store.worklog_extraction_cache import ValidatedWorklogExtractionCache
 from app.light.v4.service.worklog_custom_kg_builder import LightRagWorklogCustomKgDocument
@@ -543,6 +544,7 @@ class LightRagWorklogIndexAdapter:
         if workspace:
             lightrag_kwargs["workspace"] = workspace
         rag = dependencies.lightrag_class(**lightrag_kwargs)
+        configure_lightrag_tracing(rag)
         if self._expected_workspace is not None:
             self._verify_storage_workspaces(rag)
             for name in ("entities_vdb", "relationships_vdb", "chunks_vdb"):
@@ -819,7 +821,7 @@ def _build_gemini_llm_model_func(
             keyword_extraction=keyword_extraction, **kwargs,
         )
 
-    return llm_model_func
+    return restore_lightrag_context(llm_model_func)
 
 
 def _compute_lightrag_llm_retry_delay(
@@ -863,6 +865,7 @@ def _build_gemini_embedding_func(
         max_token_size=settings_obj.lightrag_embedding_max_token_size,
         model_name=settings_obj.lightrag_embedding_model,
     )
+    @restore_lightrag_context
     async def embedding_func(texts: list[str]) -> Any:
         key_candidates = settings_obj.gemini_api_key_candidates
         last_retryable_exc: BaseException | None = None
