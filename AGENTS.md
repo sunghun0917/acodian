@@ -55,7 +55,8 @@
 ## 6. 에이전트 설정 및 스킬 관리
 
 - `AGENTS.md` 는 프로젝트 공통 작업 규칙이고, 각 `SKILL.md` 는 특정 작업에 필요한 절차다. 스킬은 이 파일의 범위·보안·Git 규칙을 덮어쓰지 않는다.
-- `.codex/skills/` 는 Codex/OMX 스킬 위치이고, `.codex/agents/` 와 `.codex/prompts/` 는 역할별 실행 지침이다. 역할 파일과 스킬을 같은 기능으로 취급하지 않는다.
+- `.agents/skills/` 는 Codex와 Antigravity가 공유하는 프로젝트 스킬 원본 위치다. `git-branch-naming`, `git-commit`, `git-pr` 는 이 경로에서만 관리하며 `.codex/skills/` 에 중복 사본을 만들지 않는다.
+- `.codex/skills/` 는 Codex/OMX 전용 스킬 위치이고, `.codex/agents/` 와 `.codex/prompts/` 는 역할별 실행 지침이다. 역할 파일과 스킬을 같은 기능으로 취급하지 않는다.
 - 동일한 이름의 스킬이 여러 위치에 있으면 내용을 비교하고 한 원본으로 통합한다. 통합 전에는 각 도구의 발견 경로와 기존 참조를 확인하며, 어느 사본이 자동으로 우선 적용된다고 가정하지 않는다.
 - 스킬이 겹치면 명시적 호출과 현재 세션의 훅 라우팅을 따르고, 그 외에는 작업 산출물에 가장 구체적인 스킬을 선택한다. 같은 목적의 선택적 스킬을 불필요하게 중복 실행하지 않는다.
 - `.agents/roles/`, `.agents/orchestration/`, `.agents/plugins/` 는 현재 Antigravity용 역할·운영 문서다. 이름만으로 Codex 네이티브 역할이나 설치된 플러그인이라고 판단하지 않는다.
