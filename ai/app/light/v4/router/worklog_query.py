@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sse_starlette.sse import EventSourceResponse
 
 from app.config.settings import settings
+from app.client.langfuse_client import trace_worklog_operation
 from app.light.v4.model.worklog_query import (
     WorklogLightQueryRequest,
     WorklogLightQueryResponse,
@@ -70,7 +71,13 @@ async def query_worklogs(
     if disabled:
         remove_taskgroup_search_patch()
     try:
-        return await service.query_worklogs(request)
+        with trace_worklog_operation(
+            "query-worklogs", input=request.query,
+            metadata={"allowed_team_ids": request.allowed_team_ids},
+        ) as trace:
+            response = await service.query_worklogs(request)
+            trace["output"] = response.answer
+            return response
     except LightRagConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -110,10 +117,20 @@ async def query_worklogs_stream(
 
     async def event_generator():
         try:
-            async for event in service.query_worklogs_stream(request):
-                if await req.is_disconnected():
-                    break
-                yield event
+            with trace_worklog_operation(
+                "stream-worklogs-query", input=request.query,
+                metadata={"allowed_team_ids": request.allowed_team_ids},
+            ) as trace:
+                tokens = []
+                try:
+                    async for event in service.query_worklogs_stream(request):
+                        if await req.is_disconnected():
+                            break
+                        if event.get("event") == "token":
+                            tokens.append(event["data"])
+                        yield event
+                finally:
+                    trace["output"] = "".join(tokens)
         except LightRagConfigurationError:
             yield {"event": "error", "data": "LIGHTRAG_CONFIGURATION_ERROR"}
         except LightRagQueryTimeoutError:

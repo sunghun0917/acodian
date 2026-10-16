@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     gemini_api_keys: str = ""                            # 추가 Gemini 프로젝트 키 후보. comma-separated, 실제 키는 env로만 주입한다.
     lightrag_answer_llm_model: str = ""                  # 최종 답변 전용. 비어 있으면 기존 LightRAG 모델 설정을 유지한다.
 
+    # ---- Langfuse: 두 키가 설정된 경우 LightRAG v4 요청만 관측 ----
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = Field(default="", repr=False)
+    langfuse_base_url: str = "https://cloud.langfuse.com"
+    langfuse_tracing_enabled: bool = True
+
     model_config = SettingsConfigDict(
         # ai/.env 를 자동 로드한다 (없으면 위 기본값을 사용).
         env_file=Path(__file__).resolve().parents[2] / ".env",

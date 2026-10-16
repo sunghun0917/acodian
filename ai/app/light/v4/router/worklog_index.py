@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.config.settings import settings
+from app.client.langfuse_client import trace_worklog_operation
 from app.light.v4.model.worklog_index import (
     WorklogLightDeleteRequest,
     WorklogLightDeleteResponse,
@@ -48,7 +49,10 @@ async def index_worklogs(
     validate_index_batch_size(worklog_ids)
 
     try:
-        return await service.index_worklogs(worklog_ids)
+        with trace_worklog_operation("index-worklogs", input=worklog_ids) as trace:
+            response = await service.index_worklogs(worklog_ids)
+            trace["output"] = response.model_dump(by_alias=True)
+            return response
     except LightRagConfigurationError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -67,7 +71,10 @@ async def reindex_worklogs(
     worklog_ids = [int(worklog_id) for worklog_id in request.worklog_ids]
     validate_index_batch_size(worklog_ids)
     try:
-        return await service.reindex_worklogs(worklog_ids)
+        with trace_worklog_operation("reindex-worklogs", input=worklog_ids) as trace:
+            response = await service.reindex_worklogs(worklog_ids)
+            trace["output"] = response.model_dump(by_alias=True)
+            return response
     except LightRagConfigurationError as exc:
         raise HTTPException(status_code=500, detail="LIGHTRAG_CONFIGURATION_ERROR") from exc
 
