@@ -40,6 +40,7 @@ Thumbs.db
 *.swp
 
 # Common workspace caches / build outputs
+**/graphify-out/
 **/.gradle/
 **/build/
 **/out/
@@ -61,6 +62,8 @@ Thumbs.db
 .omx-state-locks/
 .omx-state-locks.identity.json
 .codex/skills/.system/**
+# Local Graphify skill junction to the user-level installation
+.codex/skills/graphify/
 !.codex/prompts/
 !.codex/prompts/**
 omx_wiki/session-log-*.md
