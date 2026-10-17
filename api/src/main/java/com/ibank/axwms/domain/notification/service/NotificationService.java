@@ -213,7 +213,7 @@ public class NotificationService {
 
 
     /**
-     * 업무 생성 후 통합 AI 요청 결과를 업무 기준 1회 알림으로 저장하고 SSE 전파 이벤트를 발행한다.
+     * 업무당 최초 통합 AI 요청 결과를 저장한다. Outbox 완료 트랜잭션에 참여해 별도 알림만 커밋되지 않게 한다.
      *
      * @param recipientUserId 작성자 사용자 ID
      * @param departmentId    업무 소속 부서 ID
@@ -224,7 +224,7 @@ public class NotificationService {
      * @param failedStages    실패한 단계 식별자 목록. 성공이면 비어 있어야 한다.
      * @return 신규 저장된 알림. 이미 같은 업무의 통합 결과 알림이 있으면 빈 Optional
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public Optional<Notification> createWorklogAiPostProcessResultNotification(Long recipientUserId,
                                                                                Long departmentId,
                                                                                Long teamId,

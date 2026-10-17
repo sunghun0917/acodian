@@ -42,6 +42,20 @@ import org.springframework.web.multipart.MultipartFile;
 @ExtendWith(MockitoExtension.class)
 class FileServiceTest {
 
+    @Test
+    @DisplayName("삭제됐거나 다른 업무에 속한 첨부 파일이면 지연된 요약 대상에서 제외한다")
+    void inactive_or_other_worklog_file_is_excluded_from_delayed_summary() {
+        File file = File.create(501L, USER_ID, "worklog/report.txt",
+                new MockMultipartFile("file", "report.txt", "text/plain", new byte[]{1}));
+        given(fileRepository.findById(9001L)).willReturn(java.util.Optional.of(file));
+
+        assertThat(fileService.isActiveWorklogFile(501L, 9001L)).isTrue();
+        assertThat(fileService.isActiveWorklogFile(502L, 9001L)).isFalse();
+        file.markDeleted();
+        assertThat(fileService.isActiveWorklogFile(501L, 9001L)).isFalse();
+        assertThat(fileService.isActiveWorklogFile(501L, 9999L)).isFalse();
+    }
+
     private static final Long USER_ID = 101L;
 
     @Mock

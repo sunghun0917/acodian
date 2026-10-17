@@ -12,11 +12,17 @@ import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.AiWorklogPipelineProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogLightIndexClient;
 import com.ibank.axwms.domain.worklog.external.WorklogPipelineClient;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository.Claim;
+import com.ibank.axwms.global.error.BusinessException;
+import com.ibank.axwms.global.error.ErrorCode;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 업무 생성 이후 AI 파일 요약, 본문 파이프라인, Light index 요청을 하나의 결과 알림으로 묶는 후처리 서비스다.
@@ -24,6 +30,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@Transactional(readOnly = true)
 public class WorklogAiPostProcessService {
 
     private static final String FILE_SUMMARY_STAGE = "FILE_SUMMARY";
@@ -39,56 +46,67 @@ public class WorklogAiPostProcessService {
     private final AiWorklogLightIndexProperties worklogLightIndexProperties;
     private final NotificationService notificationService;
     private final WorklogAiProcessingStatusService worklogAiProcessingStatusService;
+    private final WorklogAiPostProcessOutboxRepository outboxRepository;
 
     /**
-     * 커밋된 업무 snapshot 으로 세 AI 요청을 모두 시도하고, dispatch 성공은 통합 후처리 완료 상태로 남긴다.
+     * DB 연결을 점유하지 않고 미완료 단계만 실행한다. 요약은 접수, 색인은 실제 완료 후 checkpoint한다.
      *
-     * @param event 업무 생성 트랜잭션 안에서 확정된 AI 후처리 입력 snapshot
+     * @param claim 등록 snapshot과 이전 성공 단계를 가진 현재 선점
+     * @return 재시도할 단계. 원격 접수 직후 checkpoint 전 장애는 중복 요청될 수 있다.
      */
-    public void process(WorklogAiPostProcessRequestedEvent event) {
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public List<String> process(Claim claim) {
+        if (!outboxRepository.isWorklogActive(claim.worklogId())) {
+            return List.of();
+        }
         List<String> failedStages = new ArrayList<>();
+        requestFileSummaries(claim, failedStages);
+        requestWorklogPipeline(claim, failedStages);
+        requestLightIndex(claim, failedStages);
+        return List.copyOf(failedStages);
+    }
 
-        requestFileSummaries(event, failedStages);
-        requestWorklogPipeline(event, failedStages);
-        requestLightIndex(event, failedStages);
-
-        if (failedStages.isEmpty()) {
-            worklogAiProcessingStatusService.completeAiProcessing(event.worklogId());
-            notificationService.createWorklogAiPostProcessResultNotification(
-                    event.authorId(),
-                    event.departmentId(),
-                    event.teamId(),
-                    event.worklogId(),
-                    event.worklogTitle(),
-                    true,
-                    List.of()
-            );
+    /** 상태·업무당 최초 결과 알림·Outbox 갱신을 함께 커밋하며 재선점된 작업에는 관여하지 않는다. */
+    @Transactional
+    public void finish(Claim claim, List<String> failedStages) {
+        boolean active = outboxRepository.lockWorklog(claim.worklogId()).map(deleted -> !deleted).orElse(false);
+        if (!outboxRepository.lockClaim(claim)) {
             return;
         }
-
-        worklogAiProcessingStatusService.failAiProcessing(event.worklogId());
+        if (!active) {
+            outboxRepository.complete(claim);
+            return;
+        }
+        if (outboxRepository.activateQueuedRetry(claim)) {
+            return;
+        }
+        WorklogAiPostProcessRequestedEvent event = claim.event();
+        boolean success = failedStages.isEmpty();
+        if (success) {
+            worklogAiProcessingStatusService.completeAiProcessing(event.worklogId());
+        } else {
+            worklogAiProcessingStatusService.failAiProcessing(event.worklogId());
+        }
         notificationService.createWorklogAiPostProcessResultNotification(
-                event.authorId(),
-                event.departmentId(),
-                event.teamId(),
-                event.worklogId(),
-                event.worklogTitle(),
-                false,
-                failedStages
-        );
+                event.authorId(), event.departmentId(), event.teamId(), event.worklogId(),
+                event.worklogTitle(), success, failedStages);
+        if (success) {
+            outboxRepository.complete(claim);
+        } else {
+            outboxRepository.fail(claim, String.join(",", failedStages));
+        }
     }
 
     /**
-     * 첨부 파일이 없는 생성 요청은 정상 skip 으로 두고, 있는 파일은 개별 실패를 파일 ID 와 함께 집계한다.
+     * 파일별로 성공을 남겨 다른 파일 실패 시 재접수를 피하고, 이미 제거된 첨부 파일은 건너뛴다.
      */
-    private void requestFileSummaries(WorklogAiPostProcessRequestedEvent event, List<String> failedStages) {
-        if (!fileSummaryProperties.enabled()) {
-            log.debug("AI 파일 요약 통합 후처리 비활성화 worklogId={}", event.worklogId());
-            return;
-        }
-
+    private void requestFileSummaries(Claim claim, List<String> failedStages) {
+        WorklogAiPostProcessRequestedEvent event = claim.event();
         for (WorklogAiPostProcessRequestedEvent.FileSummaryTarget file : event.files()) {
-            try {
+            executeStage(claim, FILE_SUMMARY_STAGE + "(" + file.fileId() + ")", () -> {
+                if (!fileSummaryProperties.enabled() || !fileService.isActiveWorklogFile(event.worklogId(), file.fileId())) {
+                    return;
+                }
                 fileService.startWorklogFileAiSummaryProcessing(file.fileId());
                 fileSummaryClient.requestSummary(new TriggerFileSummaryDto.Request(
                         file.fileId(),
@@ -97,24 +115,19 @@ public class WorklogAiPostProcessService {
                         file.originalName(),
                         file.fileExtension()
                 ));
-            } catch (RuntimeException e) {
-                failedStages.add(FILE_SUMMARY_STAGE + "(" + file.fileId() + ")");
-                log.warn("AI 파일 요약 통합 후처리 실패 worklogId={} fileId={} storageKey={}",
-                        event.worklogId(), file.fileId(), file.storageKey(), e);
-            }
+            }, failedStages);
         }
     }
 
     /**
      * 비활성화된 업무 본문 파이프라인은 운영 설정에 따른 정상 skip 으로 보고 실패 집계에서 제외한다.
      */
-    private void requestWorklogPipeline(WorklogAiPostProcessRequestedEvent event, List<String> failedStages) {
-        if (!worklogPipelineProperties.enabled()) {
-            log.debug("AI 업무일지 파이프라인 통합 후처리 비활성화 worklogId={}", event.worklogId());
-            return;
-        }
-
-        try {
+    private void requestWorklogPipeline(Claim claim, List<String> failedStages) {
+        WorklogAiPostProcessRequestedEvent event = claim.event();
+        executeStage(claim, WORKLOG_PIPELINE_STAGE, () -> {
+            if (!worklogPipelineProperties.enabled()) {
+                return;
+            }
             worklogPipelineClient.requestPipeline(new TriggerWorklogPipelineDto.Request(
                     event.worklogId(),
                     event.requestContent(),
@@ -123,26 +136,38 @@ public class WorklogAiPostProcessService {
                     event.teamId(),
                     event.departmentId()
             ));
-        } catch (RuntimeException e) {
-            failedStages.add(WORKLOG_PIPELINE_STAGE);
-            log.warn("AI 업무일지 파이프라인 통합 후처리 실패 worklogId={}", event.worklogId(), e);
-        }
+        }, failedStages);
     }
 
     /**
      * 비활성화된 Light index 는 운영 설정에 따른 정상 skip 으로 보고 실패 집계에서 제외한다.
      */
-    private void requestLightIndex(WorklogAiPostProcessRequestedEvent event, List<String> failedStages) {
-        if (!worklogLightIndexProperties.enabled()) {
-            log.debug("AI Light 업무일지 index 통합 후처리 비활성화 worklogId={}", event.worklogId());
+    private void requestLightIndex(Claim claim, List<String> failedStages) {
+        executeStage(claim, LIGHT_INDEX_STAGE, () -> {
+            if (worklogLightIndexProperties.enabled()) {
+                worklogLightIndexClient.requestIndex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId()));
+            }
+        }, failedStages);
+    }
+
+    /** 요청 실패만 집계하고, 소유권이나 checkpoint 유실은 즉시 전파해 남은 외부 호출을 중단한다. */
+    private void executeStage(Claim claim, String stage, Runnable request, List<String> failedStages) {
+        if (claim.completedStages().contains(stage)) {
             return;
         }
-
+        if (!outboxRepository.renewLease(claim)) {
+            throw new BusinessException(ErrorCode.COMMON_INTERNAL_SERVER_ERROR);
+        }
         try {
-            worklogLightIndexClient.requestIndex(TriggerWorklogLightIndexDto.Request.of(event.worklogId()));
+            request.run();
         } catch (RuntimeException e) {
-            failedStages.add(LIGHT_INDEX_STAGE);
-            log.warn("AI Light 업무일지 index 통합 후처리 실패 worklogId={}", event.worklogId(), e);
+            failedStages.add(stage);
+            log.warn("AI 등록 후처리 요청 실패 worklogId={} stage={}", claim.worklogId(), stage, e);
+            return;
+        }
+        // shortcut: 원격 성공 직후 종료되면 재전송될 수 있다. 정확히 한 번 실행이 필요하면 AI 멱등 키를 도입한다.
+        if (!outboxRepository.checkpoint(claim, stage)) {
+            throw new BusinessException(ErrorCode.COMMON_INTERNAL_SERVER_ERROR);
         }
     }
 }
