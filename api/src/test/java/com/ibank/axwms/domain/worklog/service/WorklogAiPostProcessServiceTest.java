@@ -1,11 +1,14 @@
 package com.ibank.axwms.domain.worklog.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 
 import com.ibank.axwms.domain.file.dto.TriggerFileSummaryDto;
 import com.ibank.axwms.domain.file.external.AiFileSummaryProperties;
@@ -19,8 +22,14 @@ import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.AiWorklogPipelineProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogLightIndexClient;
 import com.ibank.axwms.domain.worklog.external.WorklogPipelineClient;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository.Claim;
+import com.ibank.axwms.global.error.BusinessException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -55,6 +64,9 @@ class WorklogAiPostProcessServiceTest {
     @Mock
     private WorklogAiProcessingStatusService worklogAiProcessingStatusService;
 
+    @Mock
+    private WorklogAiPostProcessOutboxRepository outboxRepository;
+
     private final AiWorklogPipelineProperties worklogPipelineProperties =
             new AiWorklogPipelineProperties(true, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2));
 
@@ -74,8 +86,15 @@ class WorklogAiPostProcessServiceTest {
                 worklogPipelineProperties,
                 worklogLightIndexProperties,
                 notificationService,
-                worklogAiProcessingStatusService
+                worklogAiProcessingStatusService,
+                outboxRepository
         );
+        lenient().when(outboxRepository.isWorklogActive(501L)).thenReturn(true);
+        lenient().when(outboxRepository.renewLease(any())).thenReturn(true);
+        lenient().when(outboxRepository.checkpoint(any(), any())).thenReturn(true);
+        lenient().when(outboxRepository.lockWorklog(501L)).thenReturn(Optional.of(false));
+        lenient().when(outboxRepository.lockClaim(any())).thenReturn(true);
+        lenient().when(fileService.isActiveWorklogFile(501L, 9001L)).thenReturn(true);
     }
 
     @Test
@@ -83,7 +102,7 @@ class WorklogAiPostProcessServiceTest {
     void process_creates_success_notification_when_all_requests_succeed() {
         WorklogAiPostProcessRequestedEvent event = eventWithFiles();
 
-        service.process(event);
+        processAndFinish(service, event);
 
         ArgumentCaptor<TriggerFileSummaryDto.Request> fileCaptor = ArgumentCaptor.forClass(TriggerFileSummaryDto.Request.class);
         verify(fileService).startWorklogFileAiSummaryProcessing(9001L);
@@ -120,7 +139,7 @@ class WorklogAiPostProcessServiceTest {
         WorklogAiPostProcessRequestedEvent event = eventWithFiles();
         doThrow(new IllegalStateException("AI down")).when(worklogPipelineClient).requestPipeline(any());
 
-        service.process(event);
+        processAndFinish(service, event);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<String>> failedStagesCaptor = ArgumentCaptor.forClass(List.class);
@@ -138,6 +157,8 @@ class WorklogAiPostProcessServiceTest {
         );
         assertThat(failedStagesCaptor.getValue()).containsExactly("WORKLOG_PIPELINE");
         verify(worklogLightIndexClient).requestIndex(any());
+        verify(outboxRepository).fail(any(), eq("WORKLOG_PIPELINE"));
+        verify(outboxRepository, never()).complete(any());
     }
 
     @Test
@@ -145,7 +166,7 @@ class WorklogAiPostProcessServiceTest {
     void process_skips_file_summary_when_no_files() {
         WorklogAiPostProcessRequestedEvent event = eventWithoutFiles();
 
-        service.process(event);
+        processAndFinish(service, event);
 
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(worklogPipelineClient).requestPipeline(any());
@@ -177,10 +198,11 @@ class WorklogAiPostProcessServiceTest {
                 worklogPipelineProperties,
                 worklogLightIndexProperties,
                 notificationService,
-                worklogAiProcessingStatusService
+                worklogAiProcessingStatusService,
+                outboxRepository
         );
 
-        disabledService.process(eventWithFiles());
+        processAndFinish(disabledService, eventWithFiles());
 
         verify(fileService, never()).startWorklogFileAiSummaryProcessing(any());
         verify(fileSummaryClient, never()).requestSummary(any());
@@ -198,6 +220,88 @@ class WorklogAiPostProcessServiceTest {
         );
     }
 
+    @Test
+    @DisplayName("파일과 파이프라인이 이미 접수됐으면 실패한 색인만 재시도한다")
+    void process_resumes_only_unfinished_stages() {
+        Claim claim = new Claim(501L, eventWithFiles(), Set.of("FILE_SUMMARY(9001)", "WORKLOG_PIPELINE"), 1, UUID.randomUUID());
+
+        assertThat(service.process(claim)).isEmpty();
+
+        verify(fileSummaryClient, never()).requestSummary(any());
+        verify(worklogPipelineClient, never()).requestPipeline(any());
+        verify(worklogLightIndexClient).requestIndex(any());
+        verify(outboxRepository).checkpoint(claim, "LIGHT_INDEX");
+        verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
+    }
+
+    @Test
+    @DisplayName("선점 소유권을 잃으면 남은 외부 요청을 중단한다")
+    void process_stops_dispatching_after_claim_loss() {
+        when(outboxRepository.checkpoint(any(), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.process(claim(eventWithFiles())))
+                .isInstanceOf(BusinessException.class);
+
+        verify(fileSummaryClient).requestSummary(any());
+        verify(worklogPipelineClient, never()).requestPipeline(any());
+        verify(worklogLightIndexClient, never()).requestIndex(any());
+    }
+
+    @Test
+    @DisplayName("삭제된 업무이면 AI 요청 없이 등록 후처리를 취소한다")
+    void deleted_worklog_is_cancelled_without_dispatch_or_notification() {
+        when(outboxRepository.isWorklogActive(501L)).thenReturn(false);
+        when(outboxRepository.lockWorklog(501L)).thenReturn(Optional.of(true));
+
+        processAndFinish(service, eventWithFiles());
+
+        verify(fileSummaryClient, never()).requestSummary(any());
+        verify(worklogPipelineClient, never()).requestPipeline(any());
+        verify(worklogLightIndexClient, never()).requestIndex(any());
+        verify(outboxRepository).complete(any());
+        verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
+        verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
+                any(), any(), any(), any(), any(), eq(true), any());
+    }
+
+    @Test
+    @DisplayName("첨부 파일이 삭제됐으면 해당 파일만 건너뛰고 나머지 요청을 실행한다")
+    void removed_attachment_is_skipped_without_blocking_other_stages() {
+        when(fileService.isActiveWorklogFile(501L, 9001L)).thenReturn(false);
+
+        assertThat(service.process(claim(eventWithFiles()))).isEmpty();
+
+        verify(fileSummaryClient, never()).requestSummary(any());
+        verify(outboxRepository).checkpoint(any(), eq("FILE_SUMMARY(9001)"));
+        verify(worklogPipelineClient).requestPipeline(any());
+        verify(worklogLightIndexClient).requestIndex(any());
+    }
+
+    @Test
+    @DisplayName("오래된 claim이면 업무 상태와 결과 알림을 갱신하지 않는다")
+    void finish_ignores_stale_claim() {
+        when(outboxRepository.lockClaim(any())).thenReturn(false);
+
+        service.finish(claim(eventWithFiles()), List.of());
+
+        verify(outboxRepository, never()).complete(any());
+        verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
+        verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
+                any(), any(), any(), any(), any(), eq(true), any());
+    }
+
+    /** 실제 워커와 동일하게 외부 실행과 짧은 완료 트랜잭션 경계를 나눈다. */
+    private static void processAndFinish(WorklogAiPostProcessService service, WorklogAiPostProcessRequestedEvent event) {
+        Claim claim = claim(event);
+        service.finish(claim, service.process(claim));
+    }
+
+    /** 새 작업은 아직 성공한 단계가 없는 불변 선점 snapshot으로 시작한다. */
+    private static Claim claim(WorklogAiPostProcessRequestedEvent event) {
+        return new Claim(event.worklogId(), event, Set.of(), 0, UUID.randomUUID());
+    }
+
+    /** 등록 원문과 첨부 파일이 재시도에도 보존되는 입력이다. */
     private static WorklogAiPostProcessRequestedEvent eventWithFiles() {
         return new WorklogAiPostProcessRequestedEvent(
                 501L,
@@ -216,6 +320,7 @@ class WorklogAiPostProcessServiceTest {
         );
     }
 
+    /** 파일 없는 등록도 본문 파이프라인과 색인을 요청한다. */
     private static WorklogAiPostProcessRequestedEvent eventWithoutFiles() {
         return new WorklogAiPostProcessRequestedEvent(
                 501L,

@@ -147,6 +147,13 @@ public class FileService {
     }
 
 
+    /** 지연된 등록 후처리가 삭제됐거나 다른 업무의 첨부 파일을 요약하지 않도록 대상 유효성을 확인한다. */
+    public boolean isActiveWorklogFile(Long worklogId, Long fileId) {
+        return fileRepository.findById(fileId)
+                .filter(file -> worklogId.equals(file.getWorklogId()) && !Boolean.TRUE.equals(file.getIsDeleted()))
+                .isPresent();
+    }
+
     /**
      * 통합 AI 후처리가 실제 파일 요약 요청을 보내기 직전에 파일 상태를 처리중으로 전이한다.
      *
