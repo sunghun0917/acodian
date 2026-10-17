@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="업무일지 등록·수정·삭제의 API→AI 인덱싱 흐름과 락 경계를 노드와 화살표로 표시합니다.">
+  <title>업무일지 인덱싱 · API → AI 흐름도</title>
+  <style>
+    :root { color-scheme: light; --ink: #213047; --muted: #65748a; --line: #e1e6ed; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f5f7fa; color: var(--ink); font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; word-break: keep-all; overflow-wrap: anywhere; }
+    main { width: min(1320px, calc(100% - 40px)); margin: 36px auto; }
+    header { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 14px; margin-bottom: 26px; }
+    .eyebrow { margin: 0 0 6px; color: #5b6f8d; font-size: 11px; letter-spacing: .13em; font-weight: 800; }
+    h1 { margin: 0; font-size: clamp(25px, 3vw, 36px); letter-spacing: -.045em; }
+    .meta { margin: 0; color: var(--muted); font-size: 12px; }
+    fieldset { margin: 0; padding: 0; border: 0; min-inline-size: 0; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .picker { display: inline-flex; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: #eaf0f6; }
+    .picker label { padding: 9px 26px; border-radius: 6px; cursor: pointer; color: #52637a; font-weight: 750; }
+    #pick-create:checked ~ .toolbar label[for="pick-create"], #pick-update:checked ~ .toolbar label[for="pick-update"], #pick-delete:checked ~ .toolbar label[for="pick-delete"] { background: #fff; color: #204c87; box-shadow: 0 1px 4px #1a355b15; }
+    #pick-create:focus-visible ~ .toolbar label[for="pick-create"], #pick-update:focus-visible ~ .toolbar label[for="pick-update"], #pick-delete:focus-visible ~ .toolbar label[for="pick-delete"] { outline: 3px solid #2969bf; outline-offset: 2px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; color: #596a80; font-size: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .dot { width: 10px; height: 10px; border-radius: 3px; border: 1px solid; }
+    .dot-w { background: #f0e9fb; border-color: #a08ac6; } .dot-s { background: #fff2d2; border-color: #d6b65e; } .dot-q { background: #e6f4ee; border-color: #86b8a4; }
+    .dash { width: 18px; border-top: 2px dashed #68778c; }
+    .canvas { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+    .diagram { display: none; }
+    #pick-create:checked ~ .canvas .diagram-create, #pick-update:checked ~ .canvas .diagram-update, #pick-delete:checked ~ .canvas .diagram-delete { display: block; }
+    .diagram-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; padding: 20px 26px 4px; }
+    h2 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
+    .diagram-heading p { margin: 0; color: var(--muted); font-size: 12px; }
+    .graph-scroll { overflow-x: auto; padding: 0 10px; }
+    .graph-scroll:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #2969bf; outline-offset: -3px; }
+    svg { display: block; width: 100%; min-width: 1000px; height: auto; font-family: system-ui, "Malgun Gothic", sans-serif; }
+    .lane-bg { fill: #f6f8fb; stroke: #e6ebf2; }
+    .lane-label { fill: #526a8b; font-size: 12px; font-weight: 800; letter-spacing: 2px; }
+    .lane-caption { fill: #7b8798; font-size: 11px; }
+    .work-zone { fill: #faf7ff; stroke: #b5a0d2; stroke-width: 1.5; stroke-dasharray: 7 5; }
+    .zone-label { fill: #8266aa; font-size: 11px; }
+    .edge { fill: none; stroke: #68778c; stroke-width: 1.8; stroke-linejoin: round; }
+    .async-edge { stroke-dasharray: 5 4; }
+    .edge-label { fill: #52637b; font-size: 10px; paint-order: stroke; stroke: #fff; stroke-width: 5px; stroke-linejoin: round; }
+    .node-shape { fill: #fff; stroke: #c4cfdd; stroke-width: 1.3; }
+    .node-title { fill: #263a53; font-size: 14px; font-weight: 750; }
+    .node-sub { fill: #6b7b90; font-size: 10.5px; }
+    .work .node-shape { fill: #eee6fa; stroke: #9d80c3; }
+    .work .node-title { fill: #68458e; }
+    .space-node .node-shape { fill: #fffdf7; stroke: #d5b65f; }
+    .space-badge { fill: #ffedbb; stroke: #d5b65f; stroke-width: 1; }
+    .space-label { fill: #865f0e; font-size: 10px; font-weight: 800; }
+    .queue .node-shape { fill: #eaf6f0; stroke: #91bba9; }
+    .async .node-shape { fill: #edf4ff; stroke: #a2bce0; }
+    .result .node-shape { fill: #f0f7f2; stroke: #a2bfa9; }
+    .decision .node-shape { fill: #fff9e8; stroke: #d7bd7d; }
+    .notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+    .notes p { margin: 0; padding: 13px 15px; border-left: 2px solid #c8d3e2; color: #607089; font-size: 12px; }
+    .notes strong { display: block; margin-bottom: 3px; color: #354b69; }
+    details { margin-top: 20px; color: #62738a; font-size: 12px; }
+    summary { cursor: pointer; padding: 8px 0; }
+    details ul { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-left: 18px; }
+    a { color: #35629d; text-underline-offset: 3px; }
+    .mobile-hint { display: none; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+    @media (max-width: 720px) { main { width: calc(100% - 24px); margin: 22px auto; } .picker label { padding: 9px 22px; } .diagram-heading { padding: 18px 16px 4px; } .notes { grid-template-columns: 1fr; gap: 0; } .mobile-hint { display: block; } .legend { gap: 9px; } }
+    @media print { body { background: #fff; } main { width: 100%; margin: 0; } .toolbar, .mobile-hint, details { display: none; } .diagram { display: block !important; break-after: page; } .canvas { border: 0; } svg { min-width: 0; } .graph-scroll { overflow: visible; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">AX-WMS · API → AI</p><h1>업무일지 인덱싱 흐름도</h1></div><p class="meta">등록 Outbox 반영 · 2026-10-18 · 미커밋 작업트리 기준</p></header>
+    <fieldset>
+      <legend class="sr-only">조회할 업무일지 작업 선택</legend>
+      <input class="sr-only" type="radio" name="flow" id="pick-create" checked>
+      <input class="sr-only" type="radio" name="flow" id="pick-update">
+      <input class="sr-only" type="radio" name="flow" id="pick-delete">
+      <div class="toolbar"><div class="picker"><label for="pick-create">등록</label><label for="pick-update">수정</label><label for="pick-delete">삭제</label></div><div class="legend"><span><i class="dot dot-w" aria-hidden="true"></i>업무 락 W</span><span><i class="dot dot-s" aria-hidden="true"></i>공간 락 S</span><span><i class="dot dot-q" aria-hidden="true"></i>Outbox</span><span><i class="dash" aria-hidden="true"></i>별도 실행 / 결과 전달</span></div></div>
+      <div class="canvas"><section class="diagram diagram-create" aria-labelledby="heading-create"><div class="diagram-heading"><h2 id="heading-create">등록 흐름</h2><p>원본 + 등록 Outbox 커밋 → 워커 선점 → AI 직접 색인 → 성공 기록·재시도</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="등록 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 1330" role="img" aria-labelledby="create-title create-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="create-title">원본 + 등록 Outbox 커밋 → 워커 선점 → AI 직접 색인 → 성공 기록·재시도</title>
+<desc id="create-desc">색인 경로만 표시한 등록 흐름입니다. BEFORE_COMMIT에서 원본과 등록 작업을 함께 저장하고 API 내부 Outbox 워커가 미완료 색인을 직접 요청합니다. 보라색 W는 색인 전체, 노란 S는 단계별 공간 락입니다. 실패 단계는 재시도합니다. 다른 등록 후처리와 추가 요청 분기는 생략했으며 실제 완료 여부는 전체 후처리 결과로 판정합니다.</desc>
+<defs><marker id="arrow-create" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#68778c"/></marker></defs>
+<rect class="lane-bg" x="20" y="62" width="1220" height="305" rx="14"/>
+<text class="lane-label" x="34" y="41">API SERVER · 등록과 영속 작업 기록</text>
+<text class="lane-caption" x="1238" y="41" text-anchor="end">워커도 API 프로세스 내부 · 기본 poll 종료 후 5초 대기</text>
+<rect x="267" y="75" width="706" height="108" rx="12" fill="none" stroke="#91bba9" stroke-dasharray="4 4"/>
+<text class="lane-caption" x="290" y="201">같은 DB 트랜잭션 · Outbox 저장 실패 시 업무 등록도 롤백</text>
+<text class="lane-caption" x="40" y="353">색인 외 등록 후처리·추가 요청 분기는 생략 · 실제 완료 판정은 전체 후처리 결과 기준</text>
+<rect class="work-zone" x="20" y="476" width="1220" height="305" rx="14"/>
+<text class="lane-label" x="34" y="454">AI SERVER · 직접 색인</text>
+<text class="zone-label" x="36" y="767">W 보호 구간 · 같은 업무 ID의 색인 변경 전체 · 각 S 단계 종료 시 공간 락 해제</text>
+<rect class="lane-bg" x="20" y="930" width="1220" height="370" rx="14"/>
+<text class="lane-label" x="34" y="908">API SERVER · 완료 상태와 복구</text>
+<text class="lane-caption" x="40" y="1290">오래된 claim은 상태 변경 없이 종료 · API 재기동 후 미완료 작업 복구 · 원격 접수 직후 장애는 중복 요청 가능</text>
+<path class="edge" d="M 240 128 L 280 128" marker-end="url(#arrow-create)" data-from="create-request" data-to="create-save"/>
+<path class="edge" d="M 480 128 L 520 128" marker-end="url(#arrow-create)" data-from="create-save" data-to="create-enqueue"/>
+<path class="edge" d="M 720 128 L 760 128" marker-end="url(#arrow-create)" data-from="create-enqueue" data-to="create-commit"/>
+<path class="edge" d="M 960 128 L 1000 128" marker-end="url(#arrow-create)" data-from="create-commit" data-to="create-user"/>
+<path class="edge async-edge" d="M 860 166 L 860 218 L 140 218 L 140 250" marker-end="url(#arrow-create)" data-from="create-commit" data-to="create-worker"/>
+<path class="edge" d="M 240 288 L 1000 288" marker-end="url(#arrow-create)" data-from="create-worker" data-to="create-http"/>
+<path class="edge" d="M 1100 326 L 1100 500" marker-end="url(#arrow-create)" data-from="create-http" data-to="create-w-start"/>
+<path class="edge" d="M 1000 538 L 960 538" marker-end="url(#arrow-create)" data-from="create-w-start" data-to="create-read"/>
+<path class="edge" d="M 760 538 L 720 538" marker-end="url(#arrow-create)" data-from="create-read" data-to="create-text"/>
+<path class="edge" d="M 520 538 L 480 538" marker-end="url(#arrow-create)" data-from="create-text" data-to="create-kg"/>
+<path class="edge" d="M 280 538 L 240 538" marker-end="url(#arrow-create)" data-from="create-kg" data-to="create-snapshot"/>
+<path class="edge" d="M 140 576 L 140 660" marker-end="url(#arrow-create)" data-from="create-snapshot" data-to="create-team"/>
+<path class="edge" d="M 240 698 L 280 698" marker-end="url(#arrow-create)" data-from="create-team" data-to="create-cache"/>
+<path class="edge" d="M 480 698 L 520 698" marker-end="url(#arrow-create)" data-from="create-cache" data-to="create-w-end"/>
+<path class="edge" d="M 620 736 L 620 858 L 1000 858" marker-end="url(#arrow-create)" data-from="create-w-end" data-to="create-response"/>
+<path class="edge async-edge" d="M 1100 896 L 1100 990" marker-end="url(#arrow-create)" data-from="create-response" data-to="create-finish"/>
+<path class="edge" d="M 1000 1028 L 960 1028" marker-end="url(#arrow-create)" data-from="create-finish" data-to="create-result"/>
+<path class="edge" d="M 760 1028 L 720 1028" marker-end="url(#arrow-create)" data-from="create-result" data-to="create-success"/>
+<path class="edge" d="M 760 1028 L 740 1028 L 740 1110 L 620 1110 L 620 1150" marker-end="url(#arrow-create)" data-from="create-result" data-to="create-failure"/>
+<path class="edge" d="M 1100 1066 L 1100 1150" marker-end="url(#arrow-create)" data-from="create-finish" data-to="create-cancel"/>
+<path class="edge async-edge" d="M 620 1226 L 620 1260 L 12 1260 L 12 288 L 40 288" marker-end="url(#arrow-create)" data-from="create-failure" data-to="create-worker"/>
+<g class="node normal" id="create-request">
+<rect class="node-shape" x="40" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="120" text-anchor="middle">사용자 등록 요청</text>
+<text class="node-sub" x="140" y="143" text-anchor="middle">POST /api/worklogs</text>
+</g>
+<g class="node normal" id="create-save">
+<rect class="node-shape" x="280" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="120" text-anchor="middle">업무일지 DB 저장</text>
+<text class="node-sub" x="380" y="143" text-anchor="middle">등록 데이터와 연관 정보 저장</text>
+</g>
+<g class="node queue" id="create-enqueue">
+<rect class="node-shape" x="520" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="120" text-anchor="middle">등록 Outbox 작업 기록</text>
+<text class="node-sub" x="620" y="143" text-anchor="middle">BEFORE_COMMIT · snapshot 저장</text>
+</g>
+<g class="node queue" id="create-commit">
+<rect class="node-shape" x="760" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="120" text-anchor="middle">원본 + Outbox 커밋</text>
+<text class="node-sub" x="860" y="143" text-anchor="middle">함께 성공하거나 함께 롤백</text>
+</g>
+<g class="node result" id="create-user">
+<rect class="node-shape" x="1000" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="120" text-anchor="middle">사용자에게 등록 응답</text>
+<text class="node-sub" x="1100" y="143" text-anchor="middle">AI 처리 완료는 기다리지 않음</text>
+</g>
+<g class="node queue" id="create-worker">
+<rect class="node-shape" x="40" y="250" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="280" text-anchor="middle">등록 Outbox 워커 선점</text>
+<text class="node-sub" x="140" y="303" text-anchor="middle">API 내부 · 토큰 + 10분 lease</text>
+</g>
+<g class="node queue" id="create-http">
+<rect class="node-shape" x="1000" y="250" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="280" text-anchor="middle">AI 색인 HTTP 요청</text>
+<text class="node-sub" x="1100" y="303" text-anchor="middle">POST …/worklogs-v4/index</text>
+</g>
+<g class="node work" id="create-w-start">
+<rect class="node-shape" x="1000" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="530" text-anchor="middle">업무 락 W 획득</text>
+<text class="node-sub" x="1100" y="553" text-anchor="middle">worklog:{id}</text>
+</g>
+<g class="node normal" id="create-read">
+<rect class="node-shape" x="760" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="530" text-anchor="middle">최신 원본 조회</text>
+<text class="node-sub" x="860" y="553" text-anchor="middle">DB → 본문 · Custom KG 준비</text>
+</g>
+<g class="node normal space-node" id="create-text">
+<rect class="node-shape" x="520" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="530" text-anchor="middle">전역 본문 색인</text>
+<text class="node-sub" x="620" y="553" text-anchor="middle">ainsert → processed 확인</text>
+<rect class="space-badge" x="575" y="487" width="90" height="22" rx="6"/><text class="space-label" x="620" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal space-node" id="create-kg">
+<rect class="node-shape" x="280" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="530" text-anchor="middle">전역 확정 KG 반영</text>
+<text class="node-sub" x="380" y="553" text-anchor="middle">관계 · 삭제 추적 데이터</text>
+<rect class="space-badge" x="335" y="487" width="90" height="22" rx="6"/><text class="space-label" x="380" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal" id="create-snapshot">
+<rect class="node-shape" x="40" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="530" text-anchor="middle">원본 snapshot 저장</text>
+<text class="node-sub" x="140" y="553" text-anchor="middle">전역 문서에 원본 보존</text>
+</g>
+<g class="node normal space-node" id="create-team">
+<rect class="node-shape" x="40" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="690" text-anchor="middle">팀별 사본 반영</text>
+<text class="node-sub" x="140" y="713" text-anchor="middle">본문 → KG → snapshot · schema</text>
+<rect class="space-badge" x="95" y="647" width="90" height="22" rx="6"/><text class="space-label" x="140" y="662" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal" id="create-cache">
+<rect class="node-shape" x="280" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="690" text-anchor="middle">검색 캐시 무효화</text>
+<text class="node-sub" x="380" y="713" text-anchor="middle">변경 시도 · 성공 기준 버전 갱신</text>
+</g>
+<g class="node work" id="create-w-end">
+<rect class="node-shape" x="520" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="690" text-anchor="middle">업무 락 W 해제</text>
+<text class="node-sub" x="620" y="713" text-anchor="middle">색인 변경 보호 구간 종료</text>
+</g>
+<g class="node result" id="create-response">
+<rect class="node-shape" x="1000" y="820" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="850" text-anchor="middle">색인 결과 HTTP 응답</text>
+<text class="node-sub" x="1100" y="873" text-anchor="middle">indexed 성공 → DB checkpoint</text>
+</g>
+<g class="node queue" id="create-finish">
+<rect class="node-shape" x="1000" y="990" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="1020" text-anchor="middle">API 완료 트랜잭션</text>
+<text class="node-sub" x="1100" y="1043" text-anchor="middle">업무 → claim 잠금 · 토큰 확인</text>
+</g>
+<g class="node decision" id="create-result">
+<rect class="node-shape" x="760" y="990" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="1020" text-anchor="middle">현재 작업 결과 분기</text>
+<text class="node-sub" x="860" y="1043" text-anchor="middle">전체 등록 후처리 결과 기준</text>
+</g>
+<g class="node result" id="create-success">
+<rect class="node-shape" x="520" y="990" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="1020" text-anchor="middle">완료 상태·최초 결과 알림</text>
+<text class="node-sub" x="620" y="1043" text-anchor="middle">추가 요청이 없으면 Outbox 제거</text>
+</g>
+<g class="node queue" id="create-failure">
+<rect class="node-shape" x="520" y="1150" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="1180" text-anchor="middle">실패 기록·자동 재시도</text>
+<text class="node-sub" x="620" y="1203" text-anchor="middle">성공 단계 유지 · 백오프 최대 256초</text>
+</g>
+<g class="node result" id="create-cancel">
+<rect class="node-shape" x="1000" y="1150" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="1180" text-anchor="middle">삭제된 업무 후처리 취소</text>
+<text class="node-sub" x="1100" y="1203" text-anchor="middle">남은 작업 종료 · Outbox 제거</text>
+</g>
+<text class="edge-label" x="360" y="239" text-anchor="middle">커밋 후 별도 실행</text>
+<text class="edge-label" x="620" y="271" text-anchor="middle">색인 경로만 표시</text>
+<text class="edge-label" x="1100" y="445" text-anchor="middle">색인 완료까지 HTTP 대기</text>
+<text class="edge-label" x="1100" y="957" text-anchor="middle">성공·실패 결과 검증</text>
+<text class="edge-label" x="740" y="1008" text-anchor="middle">모두 성공</text>
+<text class="edge-label" x="620" y="1096" text-anchor="middle">실패 단계 있음</text>
+<text class="edge-label" x="1100" y="1110" text-anchor="middle">원본 삭제됨</text>
+</svg></div><div class="notes"><p><strong>등록 전용 Outbox</strong><code>tb_worklog_ai_post_process_outbox</code>에 입력과 성공 단계를 보존합니다. 성공한 색인은 자동 재시도에서 반복하지 않습니다.</p><p><strong>색인 경로만 표시</strong>다른 등록 후처리와 추가 요청 상세는 생략했습니다. 실제 제품 동작은 변경하지 않았습니다.</p><p><strong>전체 결과로 완료 판정</strong>색인 성공은 해당 단계의 성공 기록입니다. Outbox 제거와 결과 알림은 전체 등록 후처리 결과를 기준으로 처리합니다.</p></div></section>
+<section class="diagram diagram-update" aria-labelledby="heading-update"><div class="diagram-heading"><h2 id="heading-update">수정 흐름</h2><p>DB 수정 + Outbox 기록 → 워커 선점 → AI에서 기존 문서 삭제·재색인 → 완료·재시도</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="수정 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 940" role="img" aria-labelledby="update-title update-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="update-title">DB 수정 + Outbox 기록 → 워커 선점 → AI에서 기존 문서 삭제·재색인 → 완료·재시도</title>
+<desc id="update-desc">API 영역은 위쪽, AI 영역은 아래쪽입니다. 보라색 점선 영역은 업무 락 W를 유지하는 구간이고, 노란 S 표시는 해당 반영 단계의 공간 락입니다. DB 수정 + Outbox 기록 → 워커 선점 → AI에서 기존 문서 삭제·재색인 → 완료·재시도</desc>
+<defs><marker id="arrow-update" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#68778c"/></marker></defs>
+<rect class="lane-bg" x="20" y="62" width="1220" height="365" rx="14"/>
+<text class="lane-label" x="34" y="41">API SERVER</text>
+<text class="lane-caption" x="1238" y="41" text-anchor="end">사용자 응답과 AI 호출은 서로 다른 실행 경로</text>
+<rect class="work-zone" x="20" y="476" width="1220" height="295" rx="14"/>
+<text class="lane-label" x="34" y="458">AI SERVER</text>
+<text class="zone-label" x="36" y="757">W 보호 구간 · 같은 업무 ID의 변경 작업 전체 · 각 S 단계 종료 시 공간 락 해제</text>
+<path class="edge" d="M 240 128 L 280 128" marker-end="url(#arrow-update)" data-from="update-request" data-to="update-save"/>
+<path class="edge" d="M 480 128 L 520 128" marker-end="url(#arrow-update)" data-from="update-save" data-to="update-changed"/>
+<path class="edge" d="M 720 128 L 760 128" marker-end="url(#arrow-update)" data-from="update-changed" data-to="update-enqueue"/>
+<path class="edge" d="M 620 166 L 620 230" marker-end="url(#arrow-update)" data-from="update-changed" data-to="update-skip"/>
+<path class="edge" d="M 960 128 L 1000 128" marker-end="url(#arrow-update)" data-from="update-enqueue" data-to="update-commit"/>
+<path class="edge" d="M 1100 166 L 1100 230" marker-end="url(#arrow-update)" data-from="update-commit" data-to="update-user"/>
+<path class="edge async-edge" d="M 1100 166 L 1100 204 L 982 204 L 982 268 L 960 268" marker-end="url(#arrow-update)" data-from="update-commit" data-to="update-worker"/>
+<path class="edge" d="M 860 306 L 860 340" marker-end="url(#arrow-update)" data-from="update-worker" data-to="update-http"/>
+<path class="edge" d="M 960 378 L 1100 378 L 1100 500" marker-end="url(#arrow-update)" data-from="update-http" data-to="update-w-start"/>
+<path class="edge" d="M 1000 538 L 960 538" marker-end="url(#arrow-update)" data-from="update-w-start" data-to="update-team-delete"/>
+<path class="edge" d="M 760 538 L 720 538" marker-end="url(#arrow-update)" data-from="update-team-delete" data-to="update-global-delete"/>
+<path class="edge" d="M 520 538 L 480 538" marker-end="url(#arrow-update)" data-from="update-global-delete" data-to="update-read"/>
+<path class="edge" d="M 280 538 L 240 538" marker-end="url(#arrow-update)" data-from="update-read" data-to="update-text-kg"/>
+<path class="edge" d="M 140 576 L 140 660" marker-end="url(#arrow-update)" data-from="update-text-kg" data-to="update-team"/>
+<path class="edge" d="M 240 698 L 280 698" marker-end="url(#arrow-update)" data-from="update-team" data-to="update-cache"/>
+<path class="edge" d="M 480 698 L 520 698" marker-end="url(#arrow-update)" data-from="update-cache" data-to="update-w-end"/>
+<path class="edge" d="M 620 736 L 620 858 L 760 858" marker-end="url(#arrow-update)" data-from="update-w-end" data-to="update-response"/>
+<path class="edge async-edge" d="M 960 858 L 1000 858" marker-end="url(#arrow-update)" data-from="update-response" data-to="update-finish"/>
+<g class="node normal" id="update-request">
+<rect class="node-shape" x="40" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="120" text-anchor="middle">사용자 수정 요청</text>
+<text class="node-sub" x="140" y="143" text-anchor="middle">PATCH /api/worklogs/{id}</text>
+</g>
+<g class="node normal" id="update-save">
+<rect class="node-shape" x="280" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="120" text-anchor="middle">DB 수정 트랜잭션</text>
+<text class="node-sub" x="380" y="143" text-anchor="middle">@Version · 동시 갱신 충돌 검사</text>
+</g>
+<g class="node decision" id="update-changed">
+<path class="node-shape" d="M 620 82 L 720 128 L 620 174 L 520 128 Z"/>
+<text class="node-title" x="620" y="120" text-anchor="middle">색인 입력 변경?</text>
+<text class="node-sub" x="620" y="143" text-anchor="middle">제목 · 내용 · 태그 · 선행업무</text>
+</g>
+<g class="node queue" id="update-enqueue">
+<rect class="node-shape" x="760" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="120" text-anchor="middle">Outbox: REINDEX</text>
+<text class="node-sub" x="860" y="143" text-anchor="middle">BEFORE_COMMIT · 같은 트랜잭션</text>
+</g>
+<g class="node normal" id="update-commit">
+<rect class="node-shape" x="1000" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="120" text-anchor="middle">DB 커밋</text>
+<text class="node-sub" x="1100" y="143" text-anchor="middle">업무 변경 + 작업 기록 함께 확정</text>
+</g>
+<g class="node result" id="update-skip">
+<rect class="node-shape" x="520" y="230" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="260" text-anchor="middle">재색인 없이 종료</text>
+<text class="node-sub" x="620" y="283" text-anchor="middle">DB 커밋 후 사용자 응답</text>
+</g>
+<g class="node queue" id="update-worker">
+<rect class="node-shape" x="760" y="230" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="260" text-anchor="middle">Outbox 워커 선점</text>
+<text class="node-sub" x="860" y="283" text-anchor="middle">SKIP LOCKED + 토큰 · lease</text>
+</g>
+<g class="node result" id="update-user">
+<rect class="node-shape" x="1000" y="230" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="260" text-anchor="middle">사용자에게 수정 응답</text>
+<text class="node-sub" x="1100" y="283" text-anchor="middle">AI 재색인은 별도 진행</text>
+</g>
+<g class="node queue" id="update-http">
+<rect class="node-shape" x="760" y="340" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="370" text-anchor="middle">AI 재색인 HTTP 요청</text>
+<text class="node-sub" x="860" y="393" text-anchor="middle">POST …/worklogs-v4/reindex</text>
+</g>
+<g class="node work" id="update-w-start">
+<rect class="node-shape" x="1000" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="530" text-anchor="middle">업무 락 W 획득</text>
+<text class="node-sub" x="1100" y="553" text-anchor="middle">삭제부터 재색인까지 계속 유지</text>
+</g>
+<g class="node normal space-node" id="update-team-delete">
+<rect class="node-shape" x="760" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="530" text-anchor="middle">기존 팀 문서 삭제</text>
+<text class="node-sub" x="860" y="553" text-anchor="middle">색인 당시 소유 팀 기준</text>
+<rect class="space-badge" x="815" y="487" width="90" height="22" rx="6"/><text class="space-label" x="860" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal space-node" id="update-global-delete">
+<rect class="node-shape" x="520" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="530" text-anchor="middle">기존 전역 문서 삭제</text>
+<text class="node-sub" x="620" y="553" text-anchor="middle">삭제 실패 문서는 재색인 중단</text>
+<rect class="space-badge" x="575" y="487" width="90" height="22" rx="6"/><text class="space-label" x="620" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal" id="update-read">
+<rect class="node-shape" x="280" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="530" text-anchor="middle">최신 DB 원본 조회</text>
+<text class="node-sub" x="380" y="553" text-anchor="middle">삭제 성공 문서만 다음 단계로</text>
+</g>
+<g class="node normal space-node" id="update-text-kg">
+<rect class="node-shape" x="40" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="530" text-anchor="middle">전역 본문 → KG 색인</text>
+<text class="node-sub" x="140" y="553" text-anchor="middle">공간 락은 두 단계 각각 사용</text>
+<rect class="space-badge" x="95" y="487" width="90" height="22" rx="6"/><text class="space-label" x="140" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal space-node" id="update-team">
+<rect class="node-shape" x="40" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="690" text-anchor="middle">snapshot · 팀 사본 반영</text>
+<text class="node-sub" x="140" y="713" text-anchor="middle">팀 본문 · KG는 각각 공간 락</text>
+<rect class="space-badge" x="95" y="647" width="90" height="22" rx="6"/><text class="space-label" x="140" y="662" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal" id="update-cache">
+<rect class="node-shape" x="280" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="690" text-anchor="middle">검색 캐시 무효화</text>
+<text class="node-sub" x="380" y="713" text-anchor="middle">삭제 · 재색인 변경을 반영</text>
+</g>
+<g class="node work" id="update-w-end">
+<rect class="node-shape" x="520" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="690" text-anchor="middle">업무 락 W 해제</text>
+<text class="node-sub" x="620" y="713" text-anchor="middle">삭제 + 재색인의 보호 구간 종료</text>
+</g>
+<g class="node result" id="update-response">
+<rect class="node-shape" x="760" y="820" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="850" text-anchor="middle">재색인 결과 HTTP 응답</text>
+<text class="node-sub" x="860" y="873" text-anchor="middle">ID별 indexed 성공 여부</text>
+</g>
+<g class="node queue" id="update-finish">
+<rect class="node-shape" x="1000" y="820" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="850" text-anchor="middle">Outbox 결과 처리</text>
+<text class="node-sub" x="1100" y="873" text-anchor="middle">성공: 제거 · 실패: 재시도</text>
+</g>
+<text class="edge-label" x="740" y="112" text-anchor="middle">예</text>
+<text class="edge-label" x="650" y="211" text-anchor="middle">아니요</text>
+<text class="edge-label" x="1100" y="442" text-anchor="middle">AI로 전달</text>
+</svg></div></section>
+<section class="diagram diagram-delete" aria-labelledby="heading-delete"><div class="diagram-heading"><h2 id="heading-delete">삭제 흐름</h2><p>DB 소프트 삭제 + Outbox 기록 → 워커 선점 → AI에서 팀·전역 문서 삭제 → 완료·재시도</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="삭제 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 940" role="img" aria-labelledby="delete-title delete-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="delete-title">DB 소프트 삭제 + Outbox 기록 → 워커 선점 → AI에서 팀·전역 문서 삭제 → 완료·재시도</title>
+<desc id="delete-desc">API 영역은 위쪽, AI 영역은 아래쪽입니다. 보라색 점선 영역은 업무 락 W를 유지하는 구간이고, 노란 S 표시는 해당 반영 단계의 공간 락입니다. DB 소프트 삭제 + Outbox 기록 → 워커 선점 → AI에서 팀·전역 문서 삭제 → 완료·재시도</desc>
+<defs><marker id="arrow-delete" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#68778c"/></marker></defs>
+<rect class="lane-bg" x="20" y="62" width="1220" height="365" rx="14"/>
+<text class="lane-label" x="34" y="41">API SERVER</text>
+<text class="lane-caption" x="1238" y="41" text-anchor="end">사용자 응답과 AI 호출은 서로 다른 실행 경로</text>
+<rect class="work-zone" x="20" y="476" width="1220" height="295" rx="14"/>
+<text class="lane-label" x="34" y="458">AI SERVER</text>
+<text class="zone-label" x="36" y="757">W 보호 구간 · 같은 업무 ID의 변경 작업 전체 · 각 S 단계 종료 시 공간 락 해제</text>
+<path class="edge" d="M 240 128 L 280 128" marker-end="url(#arrow-delete)" data-from="delete-request" data-to="delete-save"/>
+<path class="edge" d="M 480 128 L 520 128" marker-end="url(#arrow-delete)" data-from="delete-save" data-to="delete-enqueue"/>
+<path class="edge" d="M 720 128 L 760 128" marker-end="url(#arrow-delete)" data-from="delete-enqueue" data-to="delete-commit"/>
+<path class="edge" d="M 960 128 L 1000 128" marker-end="url(#arrow-delete)" data-from="delete-commit" data-to="delete-user"/>
+<path class="edge async-edge" d="M 860 166 L 860 230" marker-end="url(#arrow-delete)" data-from="delete-commit" data-to="delete-worker"/>
+<path class="edge" d="M 960 268 L 1000 268" marker-end="url(#arrow-delete)" data-from="delete-worker" data-to="delete-http"/>
+<path class="edge" d="M 1100 306 L 1100 500" marker-end="url(#arrow-delete)" data-from="delete-http" data-to="delete-w-start"/>
+<path class="edge" d="M 1000 538 L 960 538" marker-end="url(#arrow-delete)" data-from="delete-w-start" data-to="delete-owner"/>
+<path class="edge" d="M 760 538 L 720 538" marker-end="url(#arrow-delete)" data-from="delete-owner" data-to="delete-team-delete"/>
+<path class="edge" d="M 520 538 L 480 538" marker-end="url(#arrow-delete)" data-from="delete-team-delete" data-to="delete-global-delete"/>
+<path class="edge" d="M 280 538 L 240 538" marker-end="url(#arrow-delete)" data-from="delete-global-delete" data-to="delete-cache"/>
+<path class="edge" d="M 140 576 L 140 660" marker-end="url(#arrow-delete)" data-from="delete-cache" data-to="delete-w-end"/>
+<path class="edge" d="M 140 736 L 140 858 L 280 858" marker-end="url(#arrow-delete)" data-from="delete-w-end" data-to="delete-response"/>
+<path class="edge async-edge" d="M 480 858 L 520 858" marker-end="url(#arrow-delete)" data-from="delete-response" data-to="delete-finish"/>
+<g class="node normal" id="delete-request">
+<rect class="node-shape" x="40" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="120" text-anchor="middle">사용자 삭제 요청</text>
+<text class="node-sub" x="140" y="143" text-anchor="middle">DELETE /api/worklogs/{id}</text>
+</g>
+<g class="node normal" id="delete-save">
+<rect class="node-shape" x="280" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="120" text-anchor="middle">DB 소프트 삭제</text>
+<text class="node-sub" x="380" y="143" text-anchor="middle">@Version · 삭제 이벤트 발행</text>
+</g>
+<g class="node queue" id="delete-enqueue">
+<rect class="node-shape" x="520" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="120" text-anchor="middle">Outbox: DELETE</text>
+<text class="node-sub" x="620" y="143" text-anchor="middle">BEFORE_COMMIT · REINDEX보다 우선</text>
+</g>
+<g class="node normal" id="delete-commit">
+<rect class="node-shape" x="760" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="120" text-anchor="middle">DB 커밋</text>
+<text class="node-sub" x="860" y="143" text-anchor="middle">원본 삭제 + 작업 기록 함께 확정</text>
+</g>
+<g class="node result" id="delete-user">
+<rect class="node-shape" x="1000" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="120" text-anchor="middle">사용자에게 삭제 응답</text>
+<text class="node-sub" x="1100" y="143" text-anchor="middle">AI 인덱스 삭제 완료와는 별개</text>
+</g>
+<g class="node queue" id="delete-worker">
+<rect class="node-shape" x="760" y="230" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="260" text-anchor="middle">Outbox 워커 선점</text>
+<text class="node-sub" x="860" y="283" text-anchor="middle">SKIP LOCKED + 토큰 · lease</text>
+</g>
+<g class="node queue" id="delete-http">
+<rect class="node-shape" x="1000" y="230" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="260" text-anchor="middle">AI 삭제 HTTP 요청</text>
+<text class="node-sub" x="1100" y="283" text-anchor="middle">POST …/worklogs-v4/delete</text>
+</g>
+<g class="node work" id="delete-w-start">
+<rect class="node-shape" x="1000" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="530" text-anchor="middle">업무 락 W 획득</text>
+<text class="node-sub" x="1100" y="553" text-anchor="middle">동일 업무의 색인 · 수정과 충돌 방지</text>
+</g>
+<g class="node normal" id="delete-owner">
+<rect class="node-shape" x="760" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="530" text-anchor="middle">색인 당시 팀 확인</text>
+<text class="node-sub" x="860" y="553" text-anchor="middle">저장된 원본 snapshot 조회</text>
+</g>
+<g class="node normal space-node" id="delete-team-delete">
+<rect class="node-shape" x="520" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="530" text-anchor="middle">팀 인덱스 먼저 삭제</text>
+<text class="node-sub" x="620" y="553" text-anchor="middle">팀 정보가 있는 경우 실행</text>
+<rect class="space-badge" x="575" y="487" width="90" height="22" rx="6"/><text class="space-label" x="620" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal space-node" id="delete-global-delete">
+<rect class="node-shape" x="280" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="530" text-anchor="middle">전역 인덱스 삭제</text>
+<text class="node-sub" x="380" y="553" text-anchor="middle">벡터 · 그래프 · 문서 상태 정리</text>
+<rect class="space-badge" x="335" y="487" width="90" height="22" rx="6"/><text class="space-label" x="380" y="502" text-anchor="middle">공간 락 S</text>
+</g>
+<g class="node normal" id="delete-cache">
+<rect class="node-shape" x="40" y="500" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="530" text-anchor="middle">검색 캐시 무효화</text>
+<text class="node-sub" x="140" y="553" text-anchor="middle">삭제 성공 시 버전 갱신</text>
+</g>
+<g class="node work" id="delete-w-end">
+<rect class="node-shape" x="40" y="660" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="690" text-anchor="middle">업무 락 W 해제</text>
+<text class="node-sub" x="140" y="713" text-anchor="middle">삭제 보호 구간 종료</text>
+</g>
+<g class="node result" id="delete-response">
+<rect class="node-shape" x="280" y="820" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="850" text-anchor="middle">삭제 결과 HTTP 응답</text>
+<text class="node-sub" x="380" y="873" text-anchor="middle">ID별 deleted 성공 여부</text>
+</g>
+<g class="node queue" id="delete-finish">
+<rect class="node-shape" x="520" y="820" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="850" text-anchor="middle">Outbox 결과 처리</text>
+<text class="node-sub" x="620" y="873" text-anchor="middle">성공: 제거 · 실패: 재시도</text>
+</g>
+<text class="edge-label" x="860" y="205" text-anchor="middle">커밋 후 별도 실행</text>
+<text class="edge-label" x="1100" y="445" text-anchor="middle">내부 인증 · 요청 검증</text>
+</svg></div></section></div>
+    </fieldset>
+    <p class="mobile-hint">그래프는 가로로 밀어서 볼 수 있습니다. 각 선의 화살표 방향을 따라 읽어주세요.</p>
+    <div class="notes"><p><strong>W는 업무 전체, S는 각 변경 단계</strong>W는 획득부터 해제까지 유지합니다. S는 해당 단계마다 획득·해제하며, snapshot·schema 게시 전체에 유지되는 락이 아닙니다.</p><p><strong>AI 락은 프로세스 내부용</strong>W·S는 같은 이벤트 루프에서만 공유됩니다. 원본 DB의 @Version, Outbox의 선점·lease와는 다른 보호 장치입니다.</p><p><strong>현재 구현의 실행·복구 경로</strong>인덱싱 설정 활성화 기준이며 운영 부하는 측정하지 않았습니다. 재색인 삭제 실패는 해당 문서의 삽입을 중단합니다.</p></div>
+    <details><summary>코드 근거 보기</summary><ul>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/WorklogService.java">업무 저장·변경</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/WorklogAiPostProcessService.java">등록 후처리</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/event/WorklogAiPostProcessTrigger.java">등록 BEFORE_COMMIT 기록</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/repository/WorklogAiPostProcessOutboxRepository.java">등록 Outbox·checkpoint·재요청</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/WorklogAiPostProcessOutboxWorker.java">등록 Outbox 워커</a></li>
+      <li><a href="../../../api/src/main/resources/db/migration/V21__add_worklog_ai_post_process_outbox.sql">등록 Outbox 테이블 V21</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/repository/WorklogLightOutboxRepository.java">Outbox 선점·재시도</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/WorklogLightOutboxWorker.java">Outbox 워커</a></li>
+      <li><a href="../../../ai/app/light/v4/service/worklog_index_service.py">AI 인덱싱 서비스</a></li>
+      <li><a href="../../../ai/app/light/v4/service/worklog_mutation_lock.py">업무·공간 락</a></li>
+      <li><a href="../../../ai/app/light/v4/service/lightrag_adapter.py">LightRAG 변경 작업</a></li>
+      <li><a href="../../../ai/app/light/v4/service/worklog_team_scope.py">팀별 사본</a></li>
+    </ul></details>
+  </main>
+</body>
+</html>
