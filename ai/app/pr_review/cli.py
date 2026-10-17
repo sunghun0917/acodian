@@ -67,7 +67,7 @@ def _run(args: argparse.Namespace) -> None:
     result = PullRequestReviewService(
         OpenAIResponsesClient(
             api_key=api_key,
-            model=os.environ.get("PR_REVIEW_MODEL", "gpt-5.6-terra"),
+            model=os.environ.get("PR_REVIEW_MODEL", "gpt-6-luna"),
         ),
         RepositoryTools(pr_root),
     ).review(

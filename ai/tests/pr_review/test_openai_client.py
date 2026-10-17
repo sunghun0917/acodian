@@ -5,7 +5,7 @@ from app.pr_review.openai_client import OpenAIResponsesClient
 
 class FakeResponsesClient(OpenAIResponsesClient):
     def __init__(self, responses: list[dict[str, Any]]) -> None:
-        super().__init__(api_key="test", model="gpt-5.6-terra")
+        super().__init__(api_key="test", model="gpt-6-luna")
         self.responses = responses
         self.requests: list[dict[str, Any]] = []
 

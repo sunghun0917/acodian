@@ -46,5 +46,5 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_REVIEW_MODEL: gpt-5.6-terra
+          PR_REVIEW_MODEL: gpt-6-luna
         run: python -m app.pr_review.cli --event-path "$GITHUB_EVENT_PATH" --pr-root "$GITHUB_WORKSPACE/pr"
