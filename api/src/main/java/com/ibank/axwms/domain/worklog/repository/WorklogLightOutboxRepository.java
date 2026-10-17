@@ -32,14 +32,14 @@ public class WorklogLightOutboxRepository {
                 """, worklogId, operation);
     }
 
-    /** 다른 인스턴스가 점유하지 않은 기한 도래 작업 하나를 원자적으로 선점한다. */
+    /** null ID는 전체 대기 작업을 대상으로 하며 다른 인스턴스가 점유하지 않은 작업 하나를 원자적으로 선점한다. */
     public List<Claim> claim(Long worklogId, UUID token) {
         return jdbcTemplate.query("""
                 UPDATE tb_worklog_light_outbox AS o
                 SET claim_token = ?, lease_until = CURRENT_TIMESTAMP + INTERVAL '10 minutes'
                 FROM (
                     SELECT worklog_id FROM tb_worklog_light_outbox
-                    WHERE (? IS NULL OR worklog_id = ?)
+                    WHERE (CAST(? AS BIGINT) IS NULL OR worklog_id = ?)
                       AND next_attempt_at <= CURRENT_TIMESTAMP
                       AND (lease_until IS NULL OR lease_until < CURRENT_TIMESTAMP)
                     ORDER BY next_attempt_at, worklog_id
