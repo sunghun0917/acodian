@@ -1,0 +1,1112 @@
+{
+  "metadata": {
+    "run_id": "outbox-live-20261018-062120-67e5e0",
+    "jar_sha256": "5898e145a02c6e31060b66544163d68bfa7c06916fb6c76a02391e205de20639",
+    "sample_size_per_operation": 5,
+    "mode": "sequential create5 -> update5 -> delete5",
+    "poll_seconds": 5,
+    "completion_poll_seconds": 1,
+    "fileless": true,
+    "real_ai_provider": true,
+    "notes": "verified_end_to_end_seconds covers core document persistence, NOT successful AI tag indexing on create; those rows have warnings"
+  },
+  "summary": {
+    "create": {
+      "n": 5,
+      "core_pass": 5,
+      "warning_rows": 5,
+      "api_response_ms": {
+        "mean": 239.487,
+        "median": 127.857,
+        "min": 101.612,
+        "max": 727.438
+      },
+      "observed_complete_seconds": {
+        "mean": 30.586,
+        "median": 26.204,
+        "min": 24.207,
+        "max": 51.073
+      },
+      "verified_end_to_end_seconds": {
+        "mean": 30.992,
+        "median": 26.337,
+        "min": 24.34,
+        "max": 51.525
+      }
+    },
+    "update": {
+      "n": 5,
+      "core_pass": 5,
+      "warning_rows": 0,
+      "api_response_ms": {
+        "mean": 1334.714,
+        "median": 157.019,
+        "min": 93.429,
+        "max": 4901.94
+      },
+      "observed_complete_seconds": {
+        "mean": 32.661,
+        "median": 27.816,
+        "min": 27.546,
+        "max": 49.628
+      },
+      "verified_end_to_end_seconds": {
+        "mean": 32.821,
+        "median": 27.946,
+        "min": 27.678,
+        "max": 49.861
+      }
+    },
+    "delete": {
+      "n": 5,
+      "core_pass": 5,
+      "warning_rows": 0,
+      "api_response_ms": {
+        "mean": 92.454,
+        "median": 55.96,
+        "min": 42.93,
+        "max": 258.112
+      },
+      "observed_complete_seconds": {
+        "mean": 9.193,
+        "median": 9.526,
+        "min": 6.364,
+        "max": 13.836
+      },
+      "verified_end_to_end_seconds": {
+        "mean": 9.233,
+        "median": 9.577,
+        "min": 6.391,
+        "max": 13.869
+      }
+    }
+  },
+  "results": [
+    {
+      "operation": "create",
+      "number": 1,
+      "worklog_id": 1,
+      "started_at": "2026-10-17T21:23:57.349386+00:00",
+      "api_response_ms": 727.438,
+      "observed_complete_seconds": 51.073,
+      "store_verification_seconds": 0.453,
+      "verified_end_to_end_seconds": 51.525,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        1,
+        2,
+        3
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          }
+        },
+        "warnings": [
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              1,
+              2,
+              3
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              1,
+              2,
+              3
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              1,
+              2,
+              3
+            ],
+            "graph_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              1,
+              2,
+              3
+            ],
+            "graph_tags": []
+          }
+        ],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": true
+    },
+    {
+      "operation": "create",
+      "number": 2,
+      "worklog_id": 2,
+      "started_at": "2026-10-17T21:24:48.878369+00:00",
+      "api_response_ms": 138.202,
+      "observed_complete_seconds": 25.027,
+      "store_verification_seconds": 0.144,
+      "verified_end_to_end_seconds": 25.171,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        4,
+        5
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          }
+        },
+        "warnings": [
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              4,
+              5
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              4,
+              5
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              4,
+              5
+            ],
+            "graph_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              4,
+              5
+            ],
+            "graph_tags": []
+          }
+        ],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "create",
+      "number": 3,
+      "worklog_id": 3,
+      "started_at": "2026-10-17T21:25:14.054248+00:00",
+      "api_response_ms": 127.857,
+      "observed_complete_seconds": 26.204,
+      "store_verification_seconds": 0.132,
+      "verified_end_to_end_seconds": 26.337,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 161,
+      "db_tag_ids": [
+        6,
+        7,
+        8
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          }
+        },
+        "warnings": [
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              6,
+              7,
+              8
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              6,
+              7,
+              8
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              6,
+              7,
+              8
+            ],
+            "graph_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              6,
+              7,
+              8
+            ],
+            "graph_tags": []
+          }
+        ],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "create",
+      "number": 4,
+      "worklog_id": 4,
+      "started_at": "2026-10-17T21:25:40.395490+00:00",
+      "api_response_ms": 101.612,
+      "observed_complete_seconds": 24.207,
+      "store_verification_seconds": 0.133,
+      "verified_end_to_end_seconds": 24.34,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 155,
+      "db_tag_ids": [
+        1,
+        3
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          }
+        },
+        "warnings": [
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              1,
+              3
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              1,
+              3
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              1,
+              3
+            ],
+            "graph_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              1,
+              3
+            ],
+            "graph_tags": []
+          }
+        ],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "create",
+      "number": 5,
+      "worklog_id": 5,
+      "started_at": "2026-10-17T21:26:04.740480+00:00",
+      "api_response_ms": 102.326,
+      "observed_complete_seconds": 26.421,
+      "store_verification_seconds": 1.165,
+      "verified_end_to_end_seconds": 27.586,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        6,
+        8,
+        11
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [],
+            "graph_tag_ids": []
+          }
+        },
+        "warnings": [
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              6,
+              8,
+              11
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_index_tags_mismatch",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              6,
+              8,
+              11
+            ],
+            "index_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "outbox_live_20261018_062120_67e5e0",
+            "db_tags": [
+              6,
+              8,
+              11
+            ],
+            "graph_tags": []
+          },
+          {
+            "kind": "db_vs_graph_tags_missing",
+            "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+            "db_tags": [
+              6,
+              8,
+              11
+            ],
+            "graph_tags": []
+          }
+        ],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "update",
+      "number": 1,
+      "worklog_id": 1,
+      "started_at": "2026-10-17T21:26:32.398845+00:00",
+      "api_response_ms": 4901.94,
+      "observed_complete_seconds": 49.628,
+      "store_verification_seconds": 0.233,
+      "verified_end_to_end_seconds": 49.861,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        1,
+        2,
+        3
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              1,
+              2,
+              3
+            ],
+            "graph_tag_ids": [
+              1,
+              2,
+              3
+            ]
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              1,
+              2,
+              3
+            ],
+            "graph_tag_ids": [
+              1,
+              2,
+              3
+            ]
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "update",
+      "number": 2,
+      "worklog_id": 2,
+      "started_at": "2026-10-17T21:27:22.324771+00:00",
+      "api_response_ms": 1391.059,
+      "observed_complete_seconds": 27.816,
+      "store_verification_seconds": 0.131,
+      "verified_end_to_end_seconds": 27.946,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        4,
+        5
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              4,
+              5
+            ],
+            "graph_tag_ids": [
+              4,
+              5
+            ]
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              4,
+              5
+            ],
+            "graph_tag_ids": [
+              4,
+              5
+            ]
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "update",
+      "number": 3,
+      "worklog_id": 3,
+      "started_at": "2026-10-17T21:27:50.327975+00:00",
+      "api_response_ms": 157.019,
+      "observed_complete_seconds": 27.698,
+      "store_verification_seconds": 0.129,
+      "verified_end_to_end_seconds": 27.827,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 161,
+      "db_tag_ids": [
+        6,
+        7,
+        8
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              6,
+              7,
+              8
+            ],
+            "graph_tag_ids": [
+              6,
+              7,
+              8
+            ]
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              6,
+              7,
+              8
+            ],
+            "graph_tag_ids": [
+              6,
+              7,
+              8
+            ]
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "update",
+      "number": 4,
+      "worklog_id": 4,
+      "started_at": "2026-10-17T21:28:18.223927+00:00",
+      "api_response_ms": 130.125,
+      "observed_complete_seconds": 27.546,
+      "store_verification_seconds": 0.132,
+      "verified_end_to_end_seconds": 27.678,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 155,
+      "db_tag_ids": [
+        1,
+        3
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              1,
+              3
+            ],
+            "graph_tag_ids": [
+              1,
+              3
+            ]
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              1,
+              3
+            ],
+            "graph_tag_ids": [
+              1,
+              3
+            ]
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "update",
+      "number": 5,
+      "worklog_id": 5,
+      "started_at": "2026-10-17T21:28:45.957520+00:00",
+      "api_response_ms": 93.429,
+      "observed_complete_seconds": 30.615,
+      "store_verification_seconds": 0.179,
+      "verified_end_to_end_seconds": 30.794,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        6,
+        8,
+        11
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              6,
+              8,
+              11
+            ],
+            "graph_tag_ids": [
+              6,
+              8,
+              11
+            ]
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 2,
+            "indexed_tag_ids": [
+              6,
+              8,
+              11
+            ],
+            "graph_tag_ids": [
+              6,
+              8,
+              11
+            ]
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 2
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "delete",
+      "number": 1,
+      "worklog_id": 1,
+      "started_at": "2026-10-17T21:29:16.798389+00:00",
+      "api_response_ms": 258.112,
+      "observed_complete_seconds": 9.829,
+      "store_verification_seconds": 0.046,
+      "verified_end_to_end_seconds": 9.876,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        1,
+        2,
+        3
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 0
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "delete",
+      "number": 2,
+      "worklog_id": 2,
+      "started_at": "2026-10-17T21:29:26.722230+00:00",
+      "api_response_ms": 62.334,
+      "observed_complete_seconds": 13.836,
+      "store_verification_seconds": 0.033,
+      "verified_end_to_end_seconds": 13.869,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        4,
+        5
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 0
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "delete",
+      "number": 3,
+      "worklog_id": 3,
+      "started_at": "2026-10-17T21:29:40.645444+00:00",
+      "api_response_ms": 42.93,
+      "observed_complete_seconds": 9.526,
+      "store_verification_seconds": 0.051,
+      "verified_end_to_end_seconds": 9.577,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 161,
+      "db_tag_ids": [
+        6,
+        7,
+        8
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 0
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "delete",
+      "number": 4,
+      "worklog_id": 4,
+      "started_at": "2026-10-17T21:29:50.264346+00:00",
+      "api_response_ms": 42.932,
+      "observed_complete_seconds": 6.364,
+      "store_verification_seconds": 0.027,
+      "verified_end_to_end_seconds": 6.391,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 155,
+      "db_tag_ids": [
+        1,
+        3
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 0
+      },
+      "cold_first_request": false
+    },
+    {
+      "operation": "delete",
+      "number": 5,
+      "worklog_id": 5,
+      "started_at": "2026-10-17T21:29:56.701411+00:00",
+      "api_response_ms": 55.96,
+      "observed_complete_seconds": 6.41,
+      "store_verification_seconds": 0.041,
+      "verified_end_to_end_seconds": 6.451,
+      "max_observed_outbox_attempts": 0,
+      "saw_outbox_pending": true,
+      "core_pass": true,
+      "summary_length": 160,
+      "db_tag_ids": [
+        6,
+        8,
+        11
+      ],
+      "celery_success_count": 2,
+      "verification": {
+        "workspaces": {
+          "outbox_live_20261018_062120_67e5e0": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          },
+          "worklog_scope_v1_1e457e46a831e0ef_team_1": {
+            "chunks": 0,
+            "indexed_tag_ids": []
+          }
+        },
+        "warnings": [],
+        "worklog_graph_nodes": 0
+      },
+      "cold_first_request": false
+    }
+  ],
+  "postcheck": {
+    "graph_marker_observations_expected": 20,
+    "graph_marker_observations_missing": [],
+    "exact_tag_mismatches": [
+      {
+        "operation": "create",
+        "number": 1,
+        "workspace": "outbox_live_20261018_062120_67e5e0",
+        "db_tags": [
+          1,
+          2,
+          3
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 1,
+        "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+        "db_tags": [
+          1,
+          2,
+          3
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 2,
+        "workspace": "outbox_live_20261018_062120_67e5e0",
+        "db_tags": [
+          4,
+          5
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 2,
+        "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+        "db_tags": [
+          4,
+          5
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 3,
+        "workspace": "outbox_live_20261018_062120_67e5e0",
+        "db_tags": [
+          6,
+          7,
+          8
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 3,
+        "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+        "db_tags": [
+          6,
+          7,
+          8
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 4,
+        "workspace": "outbox_live_20261018_062120_67e5e0",
+        "db_tags": [
+          1,
+          3
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 4,
+        "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+        "db_tags": [
+          1,
+          3
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 5,
+        "workspace": "outbox_live_20261018_062120_67e5e0",
+        "db_tags": [
+          6,
+          8,
+          11
+        ],
+        "graph_tags": []
+      },
+      {
+        "operation": "create",
+        "number": 5,
+        "workspace": "worklog_scope_v1_1e457e46a831e0ef_team_1",
+        "db_tags": [
+          6,
+          8,
+          11
+        ],
+        "graph_tags": []
+      }
+    ],
+    "ai_http_success_counts": {
+      "index": 5,
+      "reindex": 5,
+      "delete": 5
+    },
+    "api_http_success_counts": {
+      "POST": 5,
+      "PATCH": 5,
+      "DELETE": 5
+    },
+    "scheduler_sql_error_absent": true
+  },
+  "final_storage": {
+    "qdrant_all_collection_counts": {
+      "lightrag_vdb_relationships_gemini_embedding_001_768d": {
+        "outbox_live_20261018_062120_67e5e0": 0,
+        "worklog_scope_v1_1e457e46a831e0ef_team_1": 0
+      },
+      "lightrag_vdb_chunks_gemini_embedding_001_768d": {
+        "outbox_live_20261018_062120_67e5e0": 0,
+        "worklog_scope_v1_1e457e46a831e0ef_team_1": 0
+      },
+      "lightrag_vdb_entities_gemini_embedding_001_768d": {
+        "outbox_live_20261018_062120_67e5e0": 0,
+        "worklog_scope_v1_1e457e46a831e0ef_team_1": 0
+      }
+    },
+    "neo4j_all_nodes": 0,
+    "old_marker_retained_in_worklog_description": false
+  },
+  "api_server_durations": [
+    {
+      "method": "POST",
+      "worklog_id": null,
+      "duration_ms": 720
+    },
+    {
+      "method": "POST",
+      "worklog_id": null,
+      "duration_ms": 96
+    },
+    {
+      "method": "POST",
+      "worklog_id": null,
+      "duration_ms": 80
+    },
+    {
+      "method": "POST",
+      "worklog_id": null,
+      "duration_ms": 89
+    },
+    {
+      "method": "POST",
+      "worklog_id": null,
+      "duration_ms": 81
+    },
+    {
+      "method": "PATCH",
+      "worklog_id": 1,
+      "duration_ms": 4684
+    },
+    {
+      "method": "PATCH",
+      "worklog_id": 2,
+      "duration_ms": 1223
+    },
+    {
+      "method": "PATCH",
+      "worklog_id": 3,
+      "duration_ms": 134
+    },
+    {
+      "method": "PATCH",
+      "worklog_id": 4,
+      "duration_ms": 84
+    },
+    {
+      "method": "PATCH",
+      "worklog_id": 5,
+      "duration_ms": 77
+    },
+    {
+      "method": "DELETE",
+      "worklog_id": 1,
+      "duration_ms": 214
+    },
+    {
+      "method": "DELETE",
+      "worklog_id": 2,
+      "duration_ms": 29
+    },
+    {
+      "method": "DELETE",
+      "worklog_id": 3,
+      "duration_ms": 26
+    },
+    {
+      "method": "DELETE",
+      "worklog_id": 4,
+      "duration_ms": 15
+    },
+    {
+      "method": "DELETE",
+      "worklog_id": 5,
+      "duration_ms": 20
+    }
+  ]
+}
