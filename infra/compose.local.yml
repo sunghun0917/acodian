@@ -1,6 +1,45 @@
 name: axwms-local
 
 services:
+  ai: &local-ai
+    image: axwms-ai:local
+    build:
+      context: ../ai
+      dockerfile: Dockerfile
+    env_file:
+      - ../ai/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8200
+      API_BASE_URL: http://host.docker.internal:8100
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      NEO4J_URI: bolt://neo4j:7687
+      LIGHTRAG_QDRANT_URL: http://qdrant:6333
+      LIGHTRAG_WORKING_DIR: /app/data/lightrag-v3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8200:8200"
+    volumes:
+      - axwms-lightrag-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ai_worker:
+    <<: *local-ai
+    ports: []
+    command: ["celery", "-A", "app.task.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+
   postgres:
     image: pgvector/pgvector:pg17
     container_name: axwms-postgres
@@ -71,7 +110,6 @@ services:
 
   reranker:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
-    profiles: ["reranker"]
     command:
       - "--model-id"
       - "bongsoo/klue-cross-encoder-v1"
@@ -86,6 +124,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  axwms-lightrag-data:
   axwms-postgres-data:
   axwms-redis-data:
   axwms-qdrant-data:
