@@ -115,8 +115,9 @@ ai/
 | `app/light/v3/**` | 보존된 LightRAG v3 구현 — 현재 서버 라우터에는 등록하지 않음 |
 | `app/light/v4/**` | 활성 LightRAG v4 업무일지 query/index API |
 | `app/client/langfuse_client.py`, `tests/test_langfuse_client.py` | LightRAG v4 요청 단위 Langfuse/Gemini 관측과 비밀정보·기능 범위 필터 |
-| `app/light/v4/service/worklog_team_scope.py`, `tests/test_light_worklog_team_scope.py` | 팀 workspace 검색 사전 격리와 snapshot 문맥 조회 |
+| `app/light/v4/service/worklog_team_scope.py`, `tests/test_light_worklog_team_scope.py` | 팀 workspace 검색 사전 격리·처리 상태와 최신 업무 DB 문맥 조회 |
 | `app/light/v4/store/worklog_custom_kg_tracking.py`, `tests/test_light_worklog_custom_kg_tracking.py` | 확정 KG 문서 삭제 추적·공유 노드 복원 |
+| `app/light/v4/service/lightrag_adapter.py`, `tests/test_light_worklog_pg_*.py` | 기본 PG 저장소 설정·workspace 검증·색인 팀 소유권 |
 
 ## 공유 파일과 수정 규칙
 
