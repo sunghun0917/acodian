@@ -20,6 +20,7 @@ from app.light.v4.service.worklog_custom_kg_builder import build_worklog_custom_
 from app.light.v4.service.worklog_custom_kg_source_reader import to_light_worklog_custom_kg_source
 from app.light.v4.service.worklog_document_builder import build_worklog_light_document
 from app.light.v4.service.worklog_source_reader import to_light_worklog_source
+from app.light.v4.service.worklog_source_row_reader import WorklogLightSourceRowReader
 from app.light.v4.store.worklog_source_store import LightWorklogSourceRow
 
 
@@ -29,10 +30,12 @@ class LightRagTeamScopeAdapter:
     def __init__(
         self, *, settings_obj: Settings = settings,
         adapter_factory: Callable[..., Any] = LightRagWorklogIndexAdapter,
+        source_reader: WorklogLightSourceRowReader | None = None,
     ) -> None:
         """같은 서버/working directory 안에 버전별 팀 workspace를 구성한다."""
         self._settings = settings_obj.model_copy(deep=True)
         self._adapter_factory = adapter_factory
+        self._source_reader = source_reader or WorklogLightSourceRowReader()
         self._adapters: dict[int, Any] = {}
         base = json.dumps([
             self._settings.lightrag_workspace.strip(), self._settings.lightrag_embedding_model,
@@ -53,7 +56,7 @@ class LightRagTeamScopeAdapter:
         return self._adapters[team_id]
 
     async def index_source_rows(self, rows: list[LightWorklogSourceRow]) -> None:
-        """본문과 확정 KG를 같은 팀 workspace에 넣고 마지막에 스키마를 게시한다."""
+        """본문과 팀 내 확정 KG를 같은 workspace에 색인한다."""
         by_team: dict[int, list[LightWorklogSourceRow]] = {}
         for row in rows:
             by_team.setdefault(row.team_id, []).append(row)
@@ -70,12 +73,6 @@ class LightRagTeamScopeAdapter:
                 build_worklog_custom_kg_document(to_light_worklog_custom_kg_source(row))
                 for row in kg_rows
             ])
-            snapshot_rows = [replace(row, direct_predecessors=[
-                item if item.team_id == team_id else replace(item, title="")
-                for item in row.direct_predecessors
-            ]) for row in team_rows]
-            await adapter.save_source_rows(snapshot_rows)
-            await adapter.publish_team_scope_schema(team_id)
 
     async def query_data(
         self, options: LightRagQueryOptions, allowed_team_ids: tuple[int, ...],
@@ -87,7 +84,6 @@ class LightRagTeamScopeAdapter:
 
         async def retrieve(team_id: int) -> dict[str, Any]:
             adapter = self.adapter_for(team_id)
-            await adapter.verify_team_scope_schema(team_id)
             return await adapter.query_data(options)
 
         try:
@@ -127,28 +123,36 @@ class LightRagTeamScopeAdapter:
     async def read_source_rows(
         self, worklog_ids: list[int], allowed_team_ids: tuple[int, ...],
     ) -> dict[int, LightWorklogSourceRow]:
-        """허용된 팀 workspace의 원본만 읽으며 전역 인덱스나 PostgreSQL로 우회하지 않는다."""
+        """팀별 processed 상태와 현재 업무 DB의 소속을 모두 검증한다."""
         if not worklog_ids or not allowed_team_ids:
             return {}
 
-        async def read(team_id: int) -> dict[int, LightWorklogSourceRow]:
-            adapter = self.adapter_for(team_id)
-            await adapter.verify_team_scope_schema(team_id)
-            return await adapter.read_source_rows(worklog_ids, expected_team_id=team_id)
+        async def read() -> dict[int, LightWorklogSourceRow]:
+            teams = sorted(set(allowed_team_ids))
+            processed = await asyncio.gather(*(
+                self.adapter_for(team).get_processed_worklog_ids(worklog_ids) for team in teams
+            ))
+            by_team = dict(zip(teams, processed))
+            candidates = [item for item in dict.fromkeys(worklog_ids)
+                          if any(item in ids for ids in processed)]
+            if not candidates:
+                return {}
+            current = await self._source_reader.fetch_source_rows(candidates)
+            result = {}
+            for worklog_id, row in current.items():
+                if row.worklog_id != worklog_id:
+                    raise ValueError("Source identity mismatch")
+                if worklog_id in by_team.get(row.team_id, set()):
+                    result[worklog_id] = row
+            return result
 
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*(read(team) for team in sorted(set(allowed_team_ids)))),
-                timeout=self._settings.lightrag_query_timeout_seconds,
-            )
-        except TimeoutError as exc:
-            raise LightRagQueryFailedError("Team indexed source lookup timed out") from exc
-        rows = {}
-        for result in results:
-            if rows.keys() & result.keys():
-                raise LightRagQueryFailedError("Worklog exists in multiple team snapshots")
-            rows.update(result)
-        return rows
+            return await asyncio.wait_for(read(), timeout=self._settings.lightrag_query_timeout_seconds)
+        except (LightRagConfigurationError, LightRagQueryFailedError):
+            raise
+        except Exception as exc:
+            raise LightRagQueryFailedError("Team current source lookup failed") from exc
+
 
 
 _team_scope_adapter: LightRagTeamScopeAdapter | None = None

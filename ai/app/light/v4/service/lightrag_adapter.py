@@ -9,17 +9,18 @@ LightRAG v1.4.10 문서 기준으로 `LightRAG` instance를 만들고,
 from __future__ import annotations
 
 import asyncio
+import configparser
 import logging
-import json
 import os
 import random
 from functools import partial
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias
 
 import aiohttp
-from pydantic import TypeAdapter
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from app.config.settings import Settings, settings
 from app.client.langfuse_client import configure_lightrag_tracing, restore_lightrag_context
@@ -27,7 +28,6 @@ from app.light.v4.chain.worklog_extraction import complete_body_extraction, is_b
 from app.light.v4.store.worklog_extraction_cache import ValidatedWorklogExtractionCache
 from app.light.v4.service.worklog_custom_kg_builder import LightRagWorklogCustomKgDocument
 from app.light.v4.service.worklog_document_builder import LightRagWorklogDocument
-from app.light.v4.store.worklog_source_store import LightWorklogSourceRow
 from app.light.v4.store.worklog_custom_kg_tracking import insert_tracked_worklog_custom_kg
 from app.light.v4.service.worklog_mutation_lock import worklog_mutation_locks, workspace_mutation_key
 from app.light.v4.store.worklog_team_vector_store import (
@@ -38,12 +38,14 @@ from app.task.retry_policy import is_retryable_ai_error
 
 _QDRANT_VECTOR_STORAGE = "QdrantVectorDBStorage"
 _NEO4J_GRAPH_STORAGE = "Neo4JStorage"
-_SCOPE_STORAGE_NAMES = (
+_PG_STORAGE_NAMES = (
     "full_docs", "text_chunks", "full_entities", "full_relations", "entity_chunks",
-    "relation_chunks", "llm_response_cache", "doc_status", "entities_vdb",
+    "relation_chunks", "llm_response_cache", "doc_status",
+)
+_SCOPE_STORAGE_NAMES = (
+    *_PG_STORAGE_NAMES, "entities_vdb",
     "relationships_vdb", "chunks_vdb", "chunk_entity_relation_graph",
 )
-_SOURCE_ROW_ADAPTER = TypeAdapter(LightWorklogSourceRow)
 
 EmbeddingFunc: TypeAlias = Callable[..., Awaitable[Any]]
 EmbeddingWrapper: TypeAlias = Callable[..., Callable[[EmbeddingFunc], EmbeddingFunc]]
@@ -96,6 +98,12 @@ class WorklogLightIndexAdapter(Protocol):
 
     async def delete_document(self, document_id: str) -> None:
         """단일 업무일지 문서를 LightRAG에서 삭제한다."""
+
+    async def save_indexed_team_ids(self, teams_by_worklog_id: dict[int, int]) -> None:
+        """Record team ownership before scoped writes."""
+
+    async def get_document_team_id(self, document_id: str) -> int | None:
+        """Read the last indexed team for deletion."""
 
 
 @dataclass(frozen=True)
@@ -241,109 +249,79 @@ class LightRagWorklogIndexAdapter:
         except Exception as exc:
             raise LightRagDeleteFailedError(f"LightRAG document delete failed: {exc}") from exc
 
-    async def save_source_rows(self, rows: list[LightWorklogSourceRow]) -> None:
-        """기존 full_docs 본문을 유지하며 DB 확정 원본을 구조화해 보존한다."""
-        if not rows:
+    async def save_indexed_team_ids(self, teams_by_worklog_id: dict[int, int]) -> None:
+        """Preserve native status fields and record the indexed team before team writes."""
+        if not teams_by_worklog_id:
             return
         try:
+            if any(type(worklog) is not int or worklog <= 0 or type(team) is not int or team <= 0
+                   for worklog, team in teams_by_worklog_id.items()):
+                raise ValueError("Invalid indexed ownership")
             rag = await self._get_initialized_rag()
-            records = {}
-            for row in rows:
-                doc_id = f"worklog-{row.worklog_id}"
-                existing = await rag.full_docs.get_by_id(doc_id)
-                if not isinstance(existing, dict):
-                    raise LightRagInsertFailedError("Source snapshot requires an indexed document")
-                records[doc_id] = {
-                    **existing, "worklog_source_schema_version": 1, "worklog_source": asdict(row),
-                }
-            await rag.full_docs.upsert(records)
-            await rag.full_docs.index_done_callback()
+            async with worklog_mutation_locks([workspace_mutation_key(rag)]):
+                records = {}
+                for worklog, team in teams_by_worklog_id.items():
+                    doc_id = f"worklog-{worklog}"
+                    record = await rag.doc_status.get_by_id(doc_id)
+                    if not isinstance(record, dict) or record.get("status") != "processed":
+                        raise ValueError("Indexed ownership requires a processed document")
+                    metadata = record.get("metadata", {})
+                    if not isinstance(metadata, dict):
+                        raise ValueError("Invalid document metadata")
+                    records[doc_id] = {**record, "metadata": {**metadata, "indexed_team_id": team}}
+                await rag.doc_status.upsert(records)
+                await rag.doc_status.index_done_callback()
         except LightRagConfigurationError:
             raise
         except Exception as exc:
-            raise LightRagInsertFailedError("LightRAG source snapshot save failed") from exc
+            raise LightRagInsertFailedError("LightRAG indexed ownership save failed") from exc
 
     async def get_document_team_id(self, document_id: str) -> int | None:
-        """삭제 전에 색인 당시 팀을 회수한다. 구 인덱스 문서는 None을 반환한다."""
+        """Recover indexed ownership independently of the current source database."""
         try:
             rag = await self._get_initialized_rag()
-            record = await rag.full_docs.get_by_id(document_id)
-            if record is None or (isinstance(record, dict) and "worklog_source" not in record):
+            record = await rag.doc_status.get_by_id(document_id)
+            if record is None:
                 return None
-            source = record.get("worklog_source") if isinstance(record, dict) else None
-            team_id = source.get("team_id") if isinstance(source, dict) else None
-            if (record.get("worklog_source_schema_version") != 1
-                    or type(team_id) is not int or team_id <= 0):
-                raise LightRagDeleteFailedError("Invalid indexed team ownership")
+            metadata = record.get("metadata") if isinstance(record, dict) else None
+            team_id = metadata.get("indexed_team_id") if isinstance(metadata, dict) else None
+            if type(team_id) is not int or team_id <= 0:
+                raise ValueError("Invalid indexed team ownership")
             return team_id
         except LightRagConfigurationError:
             raise
         except Exception as exc:
             raise LightRagDeleteFailedError("LightRAG indexed team lookup failed") from exc
 
-    async def read_source_rows(
-        self, worklog_ids: list[int], *, expected_team_id: int,
-    ) -> dict[int, LightWorklogSourceRow]:
-        """팀 workspace의 full_docs snapshot만 읽고 스키마·소유 팀·처리 상태를 검증한다."""
+    async def get_processed_worklog_ids(self, worklog_ids: list[int]) -> set[int]:
+        """Return only processed IDs; malformed storage responses fail closed."""
         if not worklog_ids:
-            return {}
+            return set()
         try:
             if any(type(item) is not int or item <= 0 for item in worklog_ids):
                 raise ValueError("Invalid worklog ID")
             rag = await self._get_initialized_rag()
-            doc_ids = [f"worklog-{item}" for item in worklog_ids]
-            records, statuses = await asyncio.gather(
-                rag.full_docs.get_by_ids(doc_ids), rag.doc_status.get_by_ids(doc_ids),
-            )
-            if len(records) != len(worklog_ids) or len(statuses) != len(worklog_ids):
-                raise ValueError("Invalid snapshot batch")
-            rows = {}
-            for worklog_id, record, status in zip(worklog_ids, records, statuses):
+            statuses = await rag.doc_status.get_by_ids([f"worklog-{item}" for item in worklog_ids])
+            # PGDocStatusStorage 1.4.10은 전부 미존재이면 []를 반환한다.
+            if statuses == []:
+                return set()
+            if not isinstance(statuses, list) or len(statuses) != len(worklog_ids):
+                raise ValueError("Invalid status batch")
+            result = set()
+            for worklog_id, record in zip(worklog_ids, statuses):
                 if record is None:
-                    continue  # 조회 도중 삭제된 문서는 답변 근거로 사용하지 않는다.
-                if (not isinstance(record, dict)
-                        or type(record.get("worklog_source_schema_version")) is not int
-                        or record["worklog_source_schema_version"] != 1
-                        or not isinstance(status, dict) or status.get("status") != "processed"):
-                    raise ValueError("Source snapshot is incomplete or incompatible")
-                row = _SOURCE_ROW_ADAPTER.validate_json(json.dumps(record.get("worklog_source")), strict=True)
-                if row.worklog_id != worklog_id or row.team_id != expected_team_id:
-                    raise ValueError("Source snapshot identity/scope mismatch")
-                rows[worklog_id] = row
-            return rows
+                    continue
+                if not isinstance(record, dict) or record.get("status") not in {
+                    "pending", "processing", "preprocessed", "processed", "failed",
+                }:
+                    raise ValueError("Invalid document status")
+                if record["status"] == "processed":
+                    result.add(worklog_id)
+            return result
         except LightRagConfigurationError:
             raise
         except Exception as exc:
-            raise LightRagQueryFailedError("LightRAG indexed source lookup failed") from exc
-
-    async def publish_team_scope_schema(self, team_id: int) -> None:
-        """본문/KG/원본 저장이 끝난 workspace의 호환 스키마만 게시한다."""
-        try:
-            rag = await self._get_initialized_rag()
-            await rag.full_docs.upsert({"worklog-team-scope-schema": {
-                "schema_version": 1, "team_id": team_id,
-            }})
-            await rag.full_docs.index_done_callback()
-        except LightRagConfigurationError:
-            raise
-        except Exception as exc:
-            raise LightRagInsertFailedError("LightRAG team schema publish failed") from exc
-
-    async def verify_team_scope_schema(self, team_id: int) -> None:
-        """구/미준비 workspace를 무제한 검색으로 대체하지 않고 거절한다."""
-        try:
-            rag = await self._get_initialized_rag()
-            marker = await rag.full_docs.get_by_id("worklog-team-scope-schema")
-            if (not isinstance(marker, dict)
-                    or type(marker.get("schema_version")) is not int
-                    or marker["schema_version"] != 1
-                    or type(marker.get("team_id")) is not int
-                    or marker["team_id"] != team_id):
-                raise LightRagQueryFailedError("Team scope schema is not ready")
-        except LightRagConfigurationError:
-            raise
-        except Exception as exc:
-            raise LightRagQueryFailedError("Team scope schema verification failed") from exc
+            raise LightRagQueryFailedError("LightRAG processed document lookup failed") from exc
 
     async def query_worklogs(self, options: LightRagQueryOptions) -> LightRagQueryResult:
         """LightRAG `mode="mix"` query를 실행하고 raw 결과를 반환한다."""
@@ -492,15 +470,16 @@ class LightRagWorklogIndexAdapter:
             rag = self._build_lightrag()
             try:
                 await rag.initialize_storages()
+                self._verify_storage_workspaces(rag)
             except BaseException:
-                if self._expected_workspace is not None:
-                    # LightRAG는 전체 초기화 전에는 finalize_storages를 생략한다.
-                    results = await asyncio.gather(*(
-                        storage.finalize() for name in _SCOPE_STORAGE_NAMES
-                        if (storage := getattr(rag, name, None)) is not None
-                    ), return_exceptions=True)
-                    if any(isinstance(result, BaseException) for result in results):
-                        logger.error("Team workspace cleanup failed after initialization failure")
+                # LightRAG는 전체 초기화 전에는 finalize_storages를 생략한다.
+                results = await asyncio.gather(*(
+                    storage.finalize() for name in _SCOPE_STORAGE_NAMES
+                    if (storage := getattr(rag, name, None)) is not None
+                    and callable(getattr(storage, "finalize", None))
+                ), return_exceptions=True)
+                if any(isinstance(result, BaseException) for result in results):
+                    logger.error("Workspace cleanup failed after initialization failure")
                 raise
             self._rag = rag
             self._initialized = True
@@ -508,6 +487,8 @@ class LightRagWorklogIndexAdapter:
 
     def _build_lightrag(self) -> Any:
         """현재 settings로 LightRAG instance를 생성한다."""
+        if not self._settings.lightrag_workspace.strip():
+            raise LightRagConfigurationError("LightRAG requires an explicit workspace")
         if self._expected_workspace is not None:
             if self._settings.lightrag_workspace.strip() != self._expected_workspace:
                 raise LightRagConfigurationError("Team workspace configuration mismatch")
@@ -515,6 +496,7 @@ class LightRagWorklogIndexAdapter:
             if override and override != self._expected_workspace:
                 raise LightRagConfigurationError("NEO4J_WORKSPACE overrides team isolation")
         self._ensure_required_config()
+        _configure_postgres_environment(self._settings)
         _configure_qdrant_environment(self._settings)
         _configure_neo4j_environment(self._settings)
         dependencies = self._dependencies or _load_lightrag_dependencies()
@@ -531,6 +513,8 @@ class LightRagWorklogIndexAdapter:
             "llm_model_func": llm_model_func,
             "llm_model_name": self._settings.lightrag_llm_model,
             "embedding_func": embedding_func,
+            "kv_storage": "PGKVStorage",
+            "doc_status_storage": "PGDocStatusStorage",
             "vector_storage": self._settings.lightrag_vector_storage.strip(),
             "graph_storage": self._settings.lightrag_graph_storage.strip(),
             "vector_db_storage_cls_kwargs": {},
@@ -545,12 +529,14 @@ class LightRagWorklogIndexAdapter:
             lightrag_kwargs["workspace"] = workspace
         rag = dependencies.lightrag_class(**lightrag_kwargs)
         configure_lightrag_tracing(rag)
-        if self._expected_workspace is not None:
-            self._verify_storage_workspaces(rag)
-            for name in ("entities_vdb", "relationships_vdb", "chunks_vdb"):
-                storage = getattr(rag, name)
-                storage.initialize = partial(initialize_worklog_team_vector_storage, storage, self._settings)
-                storage.finalize = partial(finalize_worklog_team_vector_storage, storage)
+        self._verify_storage_workspaces(rag)
+        for name in _PG_STORAGE_NAMES:
+            _configure_pg_delete(getattr(rag, name))
+        # 새 전역 workspace도 기존 vector 데이터를 자동 이관하지 않는다.
+        for name in ("entities_vdb", "relationships_vdb", "chunks_vdb"):
+            storage = getattr(rag, name)
+            storage.initialize = partial(initialize_worklog_team_vector_storage, storage, self._settings)
+            storage.finalize = partial(finalize_worklog_team_vector_storage, storage)
         rag.llm_response_cache = ValidatedWorklogExtractionCache(
             rag.llm_response_cache,
         )
@@ -558,7 +544,7 @@ class LightRagWorklogIndexAdapter:
 
     def _verify_storage_workspaces(self, rag: Any) -> None:
         """네트워크 초기화 전에 vector/graph/KV의 실제 namespace가 같은지 확인한다."""
-        expected = self._expected_workspace
+        expected = self._expected_workspace or self._settings.lightrag_workspace.strip()
         if getattr(rag, "workspace", None) != expected:
             raise LightRagConfigurationError("LightRAG workspace mismatch")
         for name in _SCOPE_STORAGE_NAMES:
@@ -930,6 +916,60 @@ async def close_lightrag_worklog_index_adapter() -> None:
     if _lightrag_worklog_index_adapter is not None:
         await _lightrag_worklog_index_adapter.close()
     _lightrag_worklog_index_adapter = None
+
+
+def _configure_pg_delete(storage: Any) -> None:
+    """1.4.10 PG delete의 예외 은폐를 보완하고 실제 삭제 후조건을 확인한다."""
+    async def delete(ids: list[str]) -> None:
+        if not ids:
+            return
+        from lightrag.kg.postgres_impl import namespace_to_table_name
+
+        table = namespace_to_table_name(storage.namespace)
+        if not table:
+            raise LightRagConfigurationError("Unknown PostgreSQL storage namespace")
+        # native와 같은 SQL·client를 사용하되 DB 예외를 삼키지 않는다.
+        await storage.db.execute(
+            f"DELETE FROM {table} WHERE workspace=$1 AND id = ANY($2)",
+            {"workspace": storage.workspace, "ids": ids},
+        )
+        records = await storage.get_by_ids(ids)
+        if (not isinstance(records, list) or (records and len(records) != len(ids))
+                or any(record is not None for record in records)):
+            raise LightRagDeleteFailedError("PostgreSQL records remain after deletion")
+
+    # 함수 closure는 native asdict가 live DB 연결을 deepcopy하지 않게 한다.
+    storage.delete = delete
+
+
+def _configure_postgres_environment(settings_obj: Settings) -> None:
+    """기존 업무 DB와 분리된 접속 정보만 native PG 저장소에 전달한다."""
+    config = configparser.ConfigParser()
+    try:
+        config.read("config.ini", encoding="utf-8")
+        override = config.get("postgres", "workspace", fallback="").strip()
+    except (configparser.Error, OSError):
+        raise LightRagConfigurationError("Invalid PostgreSQL config.ini") from None
+    if override or os.environ.get("POSTGRES_WORKSPACE", "").strip():
+        raise LightRagConfigurationError("POSTGRES_WORKSPACE/config.ini workspace overrides isolation")
+    try:
+        url = make_url(settings_obj.lightrag_pg_dsn)
+        source = make_url(settings_obj.pgvector_dsn)
+        if (url.drivername not in {"postgresql", "postgresql+asyncpg"}
+                or not url.host or not url.username or not url.password or not url.database
+                or url.database == source.database or url.query):
+            raise ValueError
+        port = url.port or 5432
+        if not 0 < port < 65536:
+            raise ValueError
+    except (ArgumentError, ValueError, TypeError):
+        # URL 파서 예외는 원본 DSN을 포함할 수 있으므로 그대로 노출하지 않는다.
+        raise LightRagConfigurationError("LIGHTRAG_PG_DSN must specify a separate PostgreSQL database") from None
+    os.environ.update({
+        "POSTGRES_HOST": url.host, "POSTGRES_PORT": str(port),
+        "POSTGRES_USER": url.username, "POSTGRES_PASSWORD": url.password,
+        "POSTGRES_DATABASE": url.database, "POSTGRES_ENABLE_VECTOR": "false",
+    })
 
 
 def _configure_qdrant_environment(settings_obj: Settings) -> None:
