@@ -31,6 +31,7 @@ def make_settings() -> Settings:
     return Settings(
         _env_file=None,
         gemini_api_key="fake-gemini-api-key",
+        lightrag_workspace="",  # 보존된 v3의 legacy namespace를 명시한다.
         lightrag_vector_storage="QdrantVectorDBStorage",
         lightrag_qdrant_url="http://localhost:6333",
         lightrag_graph_storage="Neo4JStorage",

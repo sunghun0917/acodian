@@ -144,7 +144,7 @@ def test_settings_has_lightrag_query_defaults(monkeypatch) -> None:
 
     settings = Settings(_env_file=None)
 
-    assert settings.lightrag_workspace == ""
+    assert settings.lightrag_workspace == "axwms_pg_v1"
     assert settings.lightrag_query_timeout_seconds == 300
     assert settings.lightrag_query_top_k == 10
     assert settings.lightrag_query_chunk_top_k == 5

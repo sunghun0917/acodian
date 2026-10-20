@@ -36,11 +36,11 @@ def isolated_team_pool(monkeypatch):
     monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", Pool)
 
 
-class SnapshotAdapter:
+class OwnershipAdapter:
     """기존 문서는 소유권 없는 fixture로, 새 문서의 snapshot 쓰기는 기록한다."""
 
-    async def save_source_rows(self, rows):
-        self.saved_rows = rows
+    async def save_indexed_team_ids(self, teams):
+        self.saved_teams = teams
 
     async def get_document_team_id(self, doc_id):
         return None
@@ -65,8 +65,8 @@ def test_delete_waits_for_source_read_and_team_index_publication(monkeypatch, bl
                 await block("source")
                 return {101: make_source_row(101)}
 
-        class Adapter(SnapshotAdapter):
-            async def save_source_rows(self, rows):
+        class Adapter(OwnershipAdapter):
+            async def save_indexed_team_ids(self, teams):
                 global_documents.add(101)
 
             async def get_document_team_id(self, doc_id):
@@ -134,7 +134,7 @@ def test_native_unprocessed_body_skips_kg_snapshot_and_team_publication(monkeypa
         async def index_custom_kg_documents(self, docs):
             calls.append("kg")
 
-        async def save_source_rows(self, rows):
+        async def save_indexed_team_ids(self, teams):
             calls.append("snapshot")
 
     async def insert(*args, **kwargs):
@@ -182,7 +182,7 @@ def test_failed_text_insert_invalidates_cache_when_native_may_have_written(monke
         async def index_custom_kg_documents(self, docs):
             calls.append("kg")
 
-        async def save_source_rows(self, rows):
+        async def save_indexed_team_ids(self, teams):
             calls.append("snapshot")
 
     async def insert(*args, **kwargs):
@@ -258,8 +258,8 @@ def test_prefilter_index_saves_ownership_before_team_writes_and_delete_cleans_bo
         async def index_custom_kg_documents(self, docs):
             calls.append("legacy_kg")
 
-        async def save_source_rows(self, rows):
-            assert rows[0].team_id == 7
+        async def save_indexed_team_ids(self, teams):
+            assert teams == {101: 7}
             calls.append("ownership")
 
         async def get_document_team_id(self, doc_id):
@@ -355,7 +355,7 @@ def test_index_service_calls_text_and_custom_kg_from_one_source_fetch(monkeypatc
             assert worklog_ids == [101, 102]
             return {101: make_source_row(101), 102: make_source_row(102)}
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         def __init__(self) -> None:
             self.text_document_ids: list[str] = []
             self.custom_document_ids: list[str] = []
@@ -375,7 +375,7 @@ def test_index_service_calls_text_and_custom_kg_from_one_source_fetch(monkeypatc
 
         assert adapter.text_document_ids == ["worklog-101", "worklog-102"]
         assert adapter.custom_document_ids == ["worklog-101", "worklog-102"]
-        assert [row.worklog_id for row in adapter.saved_rows] == [101, 102]
+        assert adapter.saved_teams == {101: 7, 102: 7}
         assert [item.model_dump(by_alias=True) for item in response.items] == [
             {"worklogId": 101, "indexed": True, "error": None},
             {"worklogId": 102, "indexed": True, "error": None},
@@ -389,7 +389,7 @@ def test_index_service_maps_custom_kg_batch_failure_to_all_found_ids(monkeypatch
         async def fetch_source_rows(self, worklog_ids: list[int]):
             return {101: make_source_row(101), 103: make_source_row(103)}
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         async def index_documents(self, documents) -> None:
             assert [document.document_id for document in documents] == ["worklog-101", "worklog-103"]
 
@@ -420,7 +420,7 @@ def test_index_service_maps_text_batch_failure_to_all_found_ids(monkeypatch) -> 
         async def fetch_source_rows(self, worklog_ids: list[int]):
             return {101: make_source_row(101), 103: make_source_row(103)}
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         def __init__(self) -> None:
             self.custom_calls = 0
 
@@ -454,7 +454,7 @@ def test_reindex_service_deletes_first_and_bumps_cache_version(monkeypatch) -> N
         async def fetch_source_rows(self, worklog_ids: list[int]):
             return {101: make_source_row(101)}
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         async def delete_document(self, document_id: str) -> None:
             calls.append(f"delete:{document_id}")
 
@@ -499,7 +499,7 @@ def test_reindex_service_deletes_first_and_bumps_cache_version(monkeypatch) -> N
 def test_delete_service_deletes_documents_and_bumps_cache_version(monkeypatch) -> None:
     deleted_ids: list[str] = []
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         async def delete_document(self, document_id: str) -> None:
             deleted_ids.append(document_id)
 
@@ -536,7 +536,7 @@ def test_reindex_service_records_delete_failure_and_skips_insert(monkeypatch) ->
         async def fetch_source_rows(self, worklog_ids: list[int]):
             return {101: make_source_row(101)}
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         async def delete_document(self, document_id: str) -> None:
             calls.append(f"delete:{document_id}")
             if document_id == "worklog-102":
@@ -585,7 +585,7 @@ def test_reindex_service_records_delete_failure_and_skips_insert(monkeypatch) ->
 def test_reindex_service_all_delete_failures_does_not_bump_and_returns_errors(monkeypatch) -> None:
     calls: list[str] = []
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         async def delete_document(self, document_id: str) -> None:
             calls.append(f"delete:{document_id}")
             raise LightRagDeleteFailedError("failed")
@@ -626,7 +626,7 @@ def test_index_service_custom_kg_failure_still_bumps_cache_version(monkeypatch) 
         async def fetch_source_rows(self, worklog_ids: list[int]):
             return {101: make_source_row(101)}
 
-    class _Adapter(SnapshotAdapter):
+    class _Adapter(OwnershipAdapter):
         async def index_documents(self, documents) -> None:
             assert [d.document_id for d in documents] == ["worklog-101"]
 

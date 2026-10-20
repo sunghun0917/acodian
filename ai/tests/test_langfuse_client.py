@@ -298,6 +298,7 @@ async def test_real_lightrag_workers_preserve_sequential_and_concurrent_request_
     deps = replace(_load_lightrag_dependencies(), gemini_model_complete=complete,
                    gemini_embed=SimpleNamespace(func=embed))
     config.lightrag_working_dir = str(tmp_path)
+    config.lightrag_pg_dsn = "postgresql://rag:fake-password@127.0.0.1:5544/axwms_lightrag"
     rag = LightRagWorklogIndexAdapter(settings_obj=config, dependencies=deps)._build_lightrag()
 
     async def request(name):
