@@ -174,7 +174,7 @@ class LightWorklogQueryService:
     async def _indexed_context(
         self, request: WorklogLightQueryRequest, options: LightRagQueryOptions
     ) -> tuple[str, list[WorklogLightReferenceItem]] | None:
-        """허용 팀 검색 결과와 같은 팀 인덱스의 snapshot으로 LLM 문맥을 구성한다."""
+        """허용 팀 후보와 현재 업무 원본으로 LLM 문맥을 구성한다."""
         pool = self._team_adapter_factory()
         retrieved = await pool.query_data(
             options, tuple(request.allowed_team_ids or ()),
@@ -185,7 +185,7 @@ class LightWorklogQueryService:
         self, request: WorklogLightQueryRequest, options: LightRagQueryOptions,
         retrieved: dict[str, Any], pool: Any,
     ) -> tuple[str, list[WorklogLightReferenceItem]] | None:
-        """DB 재조회 없이 저장된 본문/메타데이터/직접 선행 관계를 문맥으로 구성한다."""
+        """현재 DB 본문·메타데이터·접근 가능한 직접 선행 관계로 문맥을 구성한다."""
         if not isinstance(retrieved, dict):
             raise LightRagQueryFailedError("LightRAG query returned invalid retrieval data")
         if retrieved.get("status") == "failure":

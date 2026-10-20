@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     lightrag_index_max_batch_size: int = 10
     lightrag_insert_timeout_seconds: int = 120
     lightrag_kg_language: str = "Korean"
-    lightrag_workspace: str = ""
+    lightrag_workspace: str = "axwms_pg_v1"
     lightrag_vector_storage: str = "QdrantVectorDBStorage"
     lightrag_qdrant_url: str = "http://localhost:6333"
     lightrag_qdrant_api_key: str = ""
@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = Field(default="", repr=False)
     langfuse_base_url: str = "https://cloud.langfuse.com"
     langfuse_tracing_enabled: bool = True
+
+    # LightRAG 전용 DB. 업무 원본용 pgvector_dsn과 분리한다.
+    lightrag_pg_dsn: str = Field(default="", repr=False)
 
     model_config = SettingsConfigDict(
         # ai/.env 를 자동 로드한다 (없으면 위 기본값을 사용).

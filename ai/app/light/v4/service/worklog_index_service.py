@@ -255,7 +255,7 @@ class LightWorklogIndexService:
         try:
             await adapter.index_custom_kg_documents(prepared.custom_kg_documents)
             # 부분 실패 후에도 색인 당시 팀을 찾아 재시도/삭제할 수 있게 먼저 저장한다.
-            await adapter.save_source_rows(prepared.source_rows)
+            await adapter.save_indexed_team_ids({row.worklog_id: row.team_id for row in prepared.source_rows})
             await get_lightrag_team_scope_adapter().index_source_rows(prepared.source_rows)
         except LightRagConfigurationError:
             raise
