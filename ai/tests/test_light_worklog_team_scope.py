@@ -48,18 +48,10 @@ class FakeTeamAdapter:
     async def index_custom_kg_documents(self, documents):
         self.kg_documents.extend(documents)
 
-    async def save_source_rows(self, rows):
-        self.rows.extend(rows)
-
-    async def read_source_rows(self, ids, *, expected_team_id):
-        self.calls.append(("read", tuple(ids), expected_team_id))
-        return {row.worklog_id: row for row in self.rows if row.worklog_id in ids}
-
-    async def publish_team_scope_schema(self, team_id):
-        self.calls.append(("publish", team_id))
-
-    async def verify_team_scope_schema(self, team_id):
-        self.calls.append(("verify", team_id))
+    async def get_processed_worklog_ids(self, ids):
+        self.calls.append(("read", tuple(ids)))
+        indexed = {int(doc.document_id.removeprefix("worklog-")) for doc in self.documents}
+        return set(ids) & indexed
 
     async def query_data(self, options):
         await asyncio.sleep(0)
@@ -77,11 +69,17 @@ class FakeTeamAdapter:
         self.closed = True
 
 
+class FixtureReader:
+    async def fetch_source_rows(self, ids):
+        current = {1: source_row(10, 1), 2: source_row(20, 2)}
+        return {key: row for key, row in current.items() if key in ids}
+
+
 def pool(settings_obj=None):
     """외부 저장소를 초기화하지 않는 팀 adapter pool을 만든다."""
     return LightRagTeamScopeAdapter(
         settings_obj=settings_obj or Settings(_env_file=None),
-        adapter_factory=FakeTeamAdapter,
+        adapter_factory=FakeTeamAdapter, source_reader=FixtureReader(),
     )
 
 
@@ -96,7 +94,7 @@ def test_source_lookup_only_reads_allowed_team_workspaces():
     async def run():
         await scoped.index_source_rows([source_row(10, 1), source_row(20, 2)])
         assert set(await scoped.read_source_rows([1, 2], (10,))) == {1}
-        assert ("read", (1, 2), 20) not in scoped.adapter_for(20).calls
+        assert ("read", (1, 2)) not in scoped.adapter_for(20).calls
         assert set(await scoped.read_source_rows([1, 2], (10, 20))) == {1, 2}
         assert await scoped.read_source_rows([1, 2], ()) == {}
 
@@ -149,12 +147,6 @@ def test_index_separates_shared_entities_and_never_copies_cross_team_predecessor
     assert "TEAM_20_SECRET" not in str(kg)
     assert "UNKNOWN_TEAM_SECRET" not in str(kg)
     assert "TEAM_10_PREDECESSOR" in str(kg)
-    assert aa.rows[0].work_content == a.work_content
-    assert [(item.worklog_id, item.team_id, item.title) for item in aa.rows[0].direct_predecessors] == [
-        (2, 20, ""), (3, 10, "TEAM_10_PREDECESSOR"), (4, None, ""),
-    ]  # 다른 팀의 제목 없이 직접 관계 ID와 소속만 보존한다.
-    assert aa.calls[-1] == ("publish", 10)
-    assert bb.calls[-1] == ("publish", 20)
 
 
 def test_queries_for_different_team_scopes_do_not_mix_under_concurrency():
@@ -187,16 +179,14 @@ def test_empty_scope_does_not_create_or_call_an_adapter():
     }
 
 
-def test_incompatible_scope_is_not_retried_as_global_query():
+def test_failed_team_query_is_not_retried_as_global_query():
     scoped = pool()
-    adapter = scoped.adapter_for(10)
-
-    async def reject(team_id):
-        raise LightRagQueryFailedError("Team scope schema is not ready")
-    adapter.verify_team_scope_schema = reject
-    with pytest.raises(LightRagQueryFailedError, match="not ready"):
+    async def reject(options):
+        raise LightRagQueryFailedError("storage unavailable")
+    scoped.adapter_for(10).query_data = reject
+    with pytest.raises(LightRagQueryFailedError, match="unavailable"):
         asyncio.run(scoped.query_data(options(), (10,)))
-    assert not any(call[0] == "query" for call in adapter.calls)
+
 
 
 def test_close_finalizes_all_initialized_team_adapters():
@@ -230,3 +220,106 @@ def test_kg_failure_does_not_publish_team_schema():
     with pytest.raises(RuntimeError, match="KG insert failed"):
         asyncio.run(scoped.index_source_rows([source_row(10, 1)]))
     assert not any(call[0] == "publish" for call in adapter.calls)
+
+
+def test_source_lookup_uses_fresh_rows_and_matching_team_status():
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            return {1: replace(source_row(10, 1), work_content="LATEST_DB_BODY"),
+                    2: source_row(20, 2)}
+    scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
+                                     adapter_factory=FakeTeamAdapter, source_reader=Reader())
+    async def processed(ids):
+        return {1, 2}
+    scoped.adapter_for(10).get_processed_worklog_ids = processed
+    async def run():
+        result = await scoped.read_source_rows([1, 2], (10,))
+        assert result[1].work_content == "LATEST_DB_BODY"
+        assert 2 not in result
+    asyncio.run(run())
+
+
+def test_source_lookup_excludes_missing_and_unprocessed():
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            assert ids == [1]
+            return {1: source_row(10, 1)}
+    scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
+                                     adapter_factory=FakeTeamAdapter, source_reader=Reader())
+    async def processed(ids):
+        return {1}
+    scoped.adapter_for(10).get_processed_worklog_ids = processed
+    assert set(asyncio.run(scoped.read_source_rows([1, 2, 3], (10,)))) == {1}
+
+
+def test_source_failure_does_not_fallback_to_graph():
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            raise RuntimeError("source unavailable")
+    scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
+                                     adapter_factory=FakeTeamAdapter, source_reader=Reader())
+    async def processed(ids):
+        return {1}
+    scoped.adapter_for(10).get_processed_worklog_ids = processed
+    with pytest.raises(LightRagQueryFailedError):
+        asyncio.run(scoped.read_source_rows([1], (10,)))
+
+
+def test_moved_row_requires_processed_status_in_current_team():
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            return {1: source_row(20, 1)}
+    scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
+                                     adapter_factory=FakeTeamAdapter, source_reader=Reader())
+    async def old(ids):
+        return {1}
+    async def new(ids):
+        return set()
+    scoped.adapter_for(10).get_processed_worklog_ids = old
+    scoped.adapter_for(20).get_processed_worklog_ids = new
+    assert asyncio.run(scoped.read_source_rows([1], (10, 20))) == {}
+
+
+def test_latest_source_and_moved_predecessor_are_filtered_in_normal_and_sse():
+    from app.light.v4.model.worklog_query import WorklogLightQueryRequest
+    from app.light.v4.service.worklog_query_service import LightWorklogQueryService
+
+    current = {
+        1: replace(source_row(10, 1), direct_predecessors=[LightWorklogPredecessor(2, "OLD_PREDECESSOR", 10)]),
+        2: source_row(10, 2),
+    }
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            return {key: row for key, row in current.items() if key in ids}
+    class Generator:
+        def __init__(self):
+            self.prompts = []
+
+        async def complete_scoped(self, query, *, system_prompt, stream=False):
+            self.prompts.append(system_prompt)
+            if stream:
+                async def tokens():
+                    yield "safe answer"
+                return tokens()
+            return "safe answer"
+
+    scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
+                                     adapter_factory=FakeTeamAdapter, source_reader=Reader())
+    generator = Generator()
+    service = LightWorklogQueryService(settings_obj=Settings(_env_file=None),
+                                      adapter_factory=lambda: generator, team_adapter_factory=lambda: scoped)
+    request = WorklogLightQueryRequest.model_validate({"query": "status?", "allowedTeamIds": [10]})
+    async def run():
+        await scoped.index_source_rows(list(current.values()))
+        current[1] = replace(current[1], work_content="LATEST_SOURCE_BODY")
+        current[2] = source_row(20, 2)
+        response = await service.query_worklogs(request)
+        assert [ref.file_path for ref in response.references] == ["worklog://1"]
+        events = [event async for event in service.query_worklogs_stream(request)]
+        assert events[-1]["event"] == "done"
+        assert len(generator.prompts) == 2
+        for prompt in generator.prompts:
+            assert "LATEST_SOURCE_BODY" in prompt
+            assert "TEAM_20" not in prompt and "OLD_PREDECESSOR" not in prompt
+            assert "DEPENDS_ON" not in prompt
+    asyncio.run(run())

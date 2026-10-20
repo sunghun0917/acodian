@@ -7,6 +7,7 @@ RAG_SCOPE_TEST_ID, RAG_SCOPE_TEST_QDRANT_URL, RAG_SCOPE_TEST_NEO4J_URI로 명시
 import asyncio
 import json
 import os
+from dataclasses import replace
 from types import SimpleNamespace
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -23,7 +24,7 @@ from app.light.v4.store.worklog_source_store import (
     LightWorklogPredecessor, LightWorklogSourceRow, LightWorklogTag,
 )
 
-pytestmark = pytest.mark.skipif(not os.environ.get("RAG_SCOPE_TEST_ID"),
+pytestmark = pytest.mark.skipif(not (os.environ.get("RAG_SCOPE_TEST_ID") and os.environ.get("RAG_SCOPE_TEST_PG_DSN")),
                                 reason="requires isolated Qdrant/Neo4j test containers")
 
 
@@ -34,12 +35,14 @@ def integration_pool(tmp_path, monkeypatch):
     from app.light.v4.service import taskgroup_search
     import lightrag.operate as operate
 
+    from tests.test_light_worklog_pg_storage_integration import validate_test_pg_dsn
+    pg_dsn = validate_test_pg_dsn(os.environ["RAG_SCOPE_TEST_PG_DSN"])
     qdrant = os.environ["RAG_SCOPE_TEST_QDRANT_URL"]
     neo4j = os.environ["RAG_SCOPE_TEST_NEO4J_URI"]
     for endpoint, forbidden in ((qdrant, 6333), (neo4j, 7687)):
         parsed = urlparse(endpoint)
         assert parsed.hostname == "127.0.0.1" and parsed.port not in (None, forbidden)
-    for key in ("NEO4J_WORKSPACE", "QDRANT_WORKSPACE", "QDRANT_API_KEY"):
+    for key in ("NEO4J_WORKSPACE", "QDRANT_WORKSPACE", "QDRANT_API_KEY", "POSTGRES_WORKSPACE"):
         monkeypatch.delenv(key, raising=False)
     for key in ("NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD", "NEO4J_DATABASE", "QDRANT_URL"):
         monkeypatch.setenv(key, "")  # fixture 종료 시 실제 환경 복원
@@ -66,7 +69,7 @@ def integration_pool(tmp_path, monkeypatch):
     )
     identity = f"{os.environ['RAG_SCOPE_TEST_ID']}_{uuid4().hex[:8]}"
     settings = Settings(
-        _env_file=None, gemini_api_key="local-test-only", gemini_api_keys="",
+        _env_file=None, lightrag_pg_dsn=pg_dsn, gemini_api_key="local-test-only", gemini_api_keys="",
         lightrag_workspace=f"scope_test_{identity}",
         lightrag_working_dir=str(tmp_path),
         lightrag_embedding_model=f"scope-test-{identity}", embedding_dim=2,
@@ -95,7 +98,7 @@ def rows():
     ) for worklog, team, marker in ((2, 20, "B_ONLY_TEXT"), (1, 10, "A_ONLY_TEXT"), (3, 10, "A_ONLY_TEXT"))]
 
 
-def test_real_team_index_retrieval_graph_snapshot_and_delete(tmp_path, monkeypatch):
+def test_real_team_index_retrieval_graph_pg_and_delete(tmp_path, monkeypatch):
     from app.light.v4.service.lightrag_adapter import LightRagQueryOptions
     pool, _ = integration_pool(tmp_path, monkeypatch)
 
@@ -121,9 +124,8 @@ def test_real_team_index_retrieval_graph_snapshot_and_delete(tmp_path, monkeypat
                 {"src": "SharedConcept", "tgt": "User:24"}, {"src": "Worklog:1", "tgt": "Tag:5"},
             ]))
             assert all("Worklog:2" not in pair for pair in (await graph.get_nodes_edges_batch(["User:24"]))["User:24"])
-            snapshot = await a.full_docs.get_by_id("worklog-1")
-            assert snapshot["worklog_source"]["direct_predecessors"][0]["title"] == ""
-            assert snapshot["worklog_source"]["team_id"] == 10
+            record = await a.full_docs.get_by_id("worklog-1")
+            assert "worklog_source" not in record and record["content"]
             assert (await a.doc_status.get_by_id("worklog-1"))["status"] == "processed"
             options = LightRagQueryOptions(query="shared issue", top_k=10, chunk_top_k=10, response_type="summary")
             results = await asyncio.gather(*(pool.query_data(options, teams) for teams in ((10,), (20,), (10, 20))))
@@ -145,18 +147,15 @@ def test_real_team_index_retrieval_graph_snapshot_and_delete(tmp_path, monkeypat
     asyncio.run(run())
 
 
-def test_real_retrieval_normal_and_sse_use_snapshot_without_postgres(tmp_path, monkeypatch):
-    from sqlalchemy.engine import Engine
-
+def test_real_retrieval_normal_and_sse_use_latest_source(tmp_path, monkeypatch):
     pool, settings = integration_pool(tmp_path, monkeypatch)
-    prompts, db_connections = [], []
+    prompts, source_calls = [], []
     source = {row.worklog_id: row for row in rows()}
-
-    def forbidden_connect(*args, **kwargs):
-        db_connections.append(True)
-        pytest.fail("snapshot query attempted a PostgreSQL connection")
-
-    monkeypatch.setattr(Engine, "connect", forbidden_connect)
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            source_calls.append(list(ids))
+            return {key: row for key, row in source.items() if key in ids}
+    pool._source_reader = Reader()
 
     class Generator:
         async def complete_scoped(self, query, *, system_prompt, stream=False):
@@ -175,13 +174,14 @@ def test_real_retrieval_normal_and_sse_use_snapshot_without_postgres(tmp_path, m
     async def run():
         try:
             await pool.index_source_rows(list(source.values()))
+            source[1] = replace(source[1], work_content="LATEST_A_BODY")
             response = await service.query_worklogs(request)
             assert response.answer == "safe answer"
             assert {ref.file_path for ref in response.references} == {"worklog://1", "worklog://3"}
             events = [event async for event in service.query_worklogs_stream(request)]
             assert events[-1]["event"] == "done" and "worklog://2" not in events[-1]["data"]
-            assert not db_connections and len(prompts) == 2
-            assert all("A_ONLY_TEXT" in prompt and "B_ONLY" not in prompt for prompt in prompts)
+            assert source_calls and len(prompts) == 2
+            assert all("LATEST_A_BODY" in prompt and "B_ONLY" not in prompt for prompt in prompts)
         finally:
             await pool.close()
 

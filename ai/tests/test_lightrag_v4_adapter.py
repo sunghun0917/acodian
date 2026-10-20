@@ -33,6 +33,7 @@ def make_settings() -> Settings:
     return Settings(
         _env_file=None,
         gemini_api_key="fake-gemini-api-key",
+        lightrag_pg_dsn="postgresql://rag:fake-password@127.0.0.1:5544/axwms_lightrag",
         lightrag_vector_storage="QdrantVectorDBStorage",
         lightrag_qdrant_url="http://localhost:6333",
         lightrag_graph_storage="Neo4JStorage",
@@ -104,49 +105,6 @@ def test_team_adapter_rejects_mismatched_storage_workspace_before_initialization
     assert "initialize_storages" not in MismatchedRag.instances[-1].calls
 
 
-def test_source_snapshot_preserves_body_and_schema_requires_matching_team():
-    class MemoryKv:
-        def __init__(self):
-            self.data = {"worklog-1": {"content": "original text", "file_path": "worklog://1"}}
-            self.flushed = 0
-
-        async def get_by_id(self, key):
-            return self.data.get(key)
-
-        async def upsert(self, data):
-            self.data.update(data)
-
-        async def index_done_callback(self):
-            self.flushed += 1
-
-    kv = MemoryKv()
-    adapter = LightRagWorklogIndexAdapter(settings_obj=make_settings())
-
-    async def initialized():
-        return SimpleNamespace(full_docs=kv)
-    adapter._get_initialized_rag = initialized
-    row = LightWorklogSourceRow(worklog_id=1, title="Task", request_content=None,
-                                work_content="Work", author_id=24, author_name="Shared user",
-                                team_id=10, team_name="Team A", tags=[], direct_predecessors=[])
-
-    async def run():
-        with pytest.raises(LightRagQueryFailedError, match="schema"):
-            await adapter.verify_team_scope_schema(10)
-        await adapter.save_source_rows([row])
-        assert await adapter.get_document_team_id("worklog-1") == 10
-        await adapter.publish_team_scope_schema(10)
-        await adapter.verify_team_scope_schema(10)
-        with pytest.raises(LightRagQueryFailedError, match="schema"):
-            await adapter.verify_team_scope_schema(20)
-        assert await adapter.get_document_team_id("worklog-999") is None
-
-    asyncio.run(run())
-    assert kv.data["worklog-1"]["content"] == "original text"
-    assert kv.data["worklog-1"]["worklog_source"]["author_name"] == "Shared user"
-    assert kv.data["worklog-1"]["worklog_source"]["team_id"] == 10
-    assert kv.flushed == 2
-
-
 def test_installed_lightrag_constructs_disjoint_kv_graph_and_vector_scopes(tmp_path, monkeypatch):
     """실제 1.4.10 생성자를 쓰되 initialize_storages/모델/네트워크는 호출하지 않는다."""
     monkeypatch.delenv("NEO4J_WORKSPACE", raising=False)
@@ -158,7 +116,8 @@ def test_installed_lightrag_constructs_disjoint_kv_graph_and_vector_scopes(tmp_p
     rag = adapter._build_lightrag()
     assert rag.chunk_entity_relation_graph.workspace == configured.lightrag_workspace
     assert rag.chunks_vdb.effective_workspace == configured.lightrag_workspace
-    assert configured.lightrag_workspace in rag.full_docs._file_name
+    assert type(rag.full_docs).__name__ == "PGKVStorage"
+    assert type(rag.doc_status).__name__ == "PGDocStatusStorage"
     assert rag.chunks_vdb._client is None
     assert rag.chunk_entity_relation_graph._driver is None
 
@@ -244,9 +203,15 @@ class FakeLightRAG:
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
+        self.workspace = kwargs.get("workspace", "")
+        self.working_dir = kwargs.get("working_dir", "")
+        for name in ("full_docs", "text_chunks", "full_entities", "full_relations", "entity_chunks",
+                     "relation_chunks", "entities_vdb", "relationships_vdb", "chunks_vdb",
+                     "chunk_entity_relation_graph"):
+            setattr(self, name, SimpleNamespace(workspace=self.workspace, effective_workspace=self.workspace))
         self.calls: list[Any] = []
         self.statuses = {}
-        self.doc_status = SimpleNamespace(get_by_ids=self.get_statuses)
+        self.doc_status = SimpleNamespace(get_by_ids=self.get_statuses, workspace=self.workspace)
         self.llm_response_cache = SimpleNamespace(workspace=kwargs.get("workspace", ""))
         FakeLightRAG.instances.append(self)
 
@@ -351,7 +316,7 @@ def test_lightrag_adapter_initializes_inserts_ids_and_finalizes(monkeypatch) -> 
         assert fake_rag.kwargs["llm_model_name"] == "gemini-2.5-flash"
         assert fake_rag.kwargs["vector_storage"] == "QdrantVectorDBStorage"
         assert fake_rag.kwargs["graph_storage"] == "Neo4JStorage"
-        assert "workspace" not in fake_rag.kwargs
+        assert fake_rag.kwargs["workspace"] == "axwms_pg_v1"
         assert fake_rag.kwargs["vector_db_storage_cls_kwargs"] == {}
         assert fake_rag.kwargs["addon_params"] == {"language": "Korean"}
         assert os.environ["QDRANT_URL"] == "http://localhost:6333"
@@ -422,7 +387,7 @@ def test_lightrag_adapter_configures_qdrant_vector_kwargs() -> None:
         fake_rag = FakeLightRAG.instances[0]
 
         assert fake_rag.kwargs["vector_storage"] == "QdrantVectorDBStorage"
-        assert "workspace" not in fake_rag.kwargs
+        assert fake_rag.kwargs["workspace"] == "axwms_pg_v1"
         assert fake_rag.kwargs["vector_db_storage_cls_kwargs"] == {}
 
     asyncio.run(run_case())
@@ -767,7 +732,7 @@ def test_lightrag_adapter_bridges_qdrant_url_and_api_key() -> None:
     assert os.environ["QDRANT_URL"] == "https://qdrant.example.test"
     assert os.environ["QDRANT_API_KEY"] == "fake-qdrant-api-key"
     assert "QDRANT_WORKSPACE" not in os.environ
-    assert "workspace" not in FakeLightRAG.instances[0].kwargs
+    assert FakeLightRAG.instances[0].kwargs["workspace"] == "axwms_pg_v1"
 
 
 def test_lightrag_adapter_removes_stale_qdrant_workspace_env(
@@ -1103,7 +1068,9 @@ def test_lightrag_adapter_indexes_custom_kg_documents_with_document_id() -> None
             super().__init__(**kwargs)
             for name in ("doc_status", "full_entities", "full_relations", "entity_chunks",
                          "relation_chunks", "text_chunks", "llm_response_cache"):
-                setattr(self, name, Kv())
+                store = Kv()
+                store.workspace = self.workspace
+                setattr(self, name, store)
             self.doc_status.data["worklog-101"] = {"chunks_list": ["body-101"]}
 
     FakeLightRAG.instances = []
@@ -1396,89 +1363,6 @@ def test_delete_accepts_native_not_found_for_retry():
     dependencies, _, _, _ = make_dependencies(Rag)
     adapter = LightRagWorklogIndexAdapter(settings_obj=make_settings(), dependencies=dependencies)
     asyncio.run(adapter.delete_document("worklog-101"))
-
-
-def test_schema_and_snapshot_roundtrip_with_installed_json_kv(tmp_path, monkeypatch):
-    from lightrag.kg import json_kv_impl
-
-    async def flags(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr(json_kv_impl, "set_all_update_flags", flags)
-    kv = json_kv_impl.JsonKVStorage(namespace="full_docs", workspace="contract",
-                                  global_config={"working_dir": str(tmp_path)}, embedding_func=None)
-    kv._storage_lock = asyncio.Lock()
-    kv._data = {}
-    kv.index_done_callback = flags
-    adapter = LightRagWorklogIndexAdapter(settings_obj=make_settings())
-
-    async def initialized():
-        return SimpleNamespace(full_docs=kv)
-
-    adapter._get_initialized_rag = initialized
-    row = LightWorklogSourceRow(worklog_id=1, title="Task", request_content=None,
-                               work_content="Work", author_id=24, author_name="Shared user",
-                               team_id=10, team_name="Team A", tags=[], direct_predecessors=[])
-
-    async def run():
-        await kv.upsert({"worklog-1": {"content": "original text"}})
-        await adapter.save_source_rows([row])
-        await adapter.publish_team_scope_schema(10)
-        marker = await kv.get_by_id("worklog-team-scope-schema")
-        assert {"create_time", "update_time", "_id"} <= marker.keys()
-        await adapter.verify_team_scope_schema(10)
-        assert await adapter.get_document_team_id("worklog-1") == 10
-        assert (await kv.get_by_id("worklog-1"))["content"] == "original text"
-        for invalid in ({"schema_version": True, "team_id": 10},
-                        {"schema_version": 1, "team_id": True},
-                        {"schema_version": 1, "team_id": 20}):
-            await kv.upsert({"worklog-team-scope-schema": invalid})
-            with pytest.raises(LightRagQueryFailedError):
-                await adapter.verify_team_scope_schema(10)
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("corruption", [None, "team", "id", "schema", "body", "pending"])
-def test_indexed_source_rows_validate_scope_identity_schema_and_status(corruption):
-    from dataclasses import asdict
-    row = LightWorklogSourceRow(worklog_id=1, title="Task", request_content=None,
-                               work_content="Indexed body", author_id=24, author_name="User",
-                               team_id=10, team_name="Team", tags=[], direct_predecessors=[])
-    record = {"worklog_source_schema_version": 1, "worklog_source": asdict(row)}
-    status = {"status": "processed"}
-    if corruption == "team":
-        record["worklog_source"]["team_id"] = 20
-    elif corruption == "id":
-        record["worklog_source"]["worklog_id"] = 2
-    elif corruption == "schema":
-        record["worklog_source_schema_version"] = True
-    elif corruption == "body":
-        del record["worklog_source"]["work_content"]
-    elif corruption == "pending":
-        status["status"] = "processing"
-
-    class Kv:
-        async def get_by_ids(self, keys):
-            return [record if key == "worklog-1" else None for key in keys]
-
-    class Status:
-        async def get_by_ids(self, keys):
-            return [status for key in keys]
-
-    adapter = LightRagWorklogIndexAdapter(settings_obj=make_settings())
-
-    async def initialized():
-        return SimpleNamespace(full_docs=Kv(), doc_status=Status())
-
-    adapter._get_initialized_rag = initialized
-    async def run():
-        if corruption is not None:
-            with pytest.raises(LightRagQueryFailedError):
-                await adapter.read_source_rows([1, 99], expected_team_id=10)
-        else:
-            assert await adapter.read_source_rows([1, 99], expected_team_id=10) == {1: row}
-    asyncio.run(run())
 
 
 def test_lightrag_adapter_wraps_llm_response_cache_with_validation() -> None:
