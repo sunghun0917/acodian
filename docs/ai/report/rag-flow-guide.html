@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="업무일지 등록·수정·삭제의 API→AI 인덱싱 흐름과 락 경계를 노드와 화살표로 표시합니다.">
-  <title>업무일지 인덱싱 · API → AI 흐름도</title>
+  <meta name="description" content="업무일지 인덱싱·검색과 PostgreSQL 전환, 권한 및 락 경계를 표시합니다.">
+  <title>업무일지 인덱싱·검색 · API → AI 흐름도</title>
   <style>
     :root { color-scheme: light; --ink: #213047; --muted: #65748a; --line: #e1e6ed; }
     * { box-sizing: border-box; }
@@ -19,8 +19,8 @@
     .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
     .picker { display: inline-flex; gap: 4px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: #eaf0f6; }
     .picker label { padding: 9px 26px; border-radius: 6px; cursor: pointer; color: #52637a; font-weight: 750; }
-    #pick-create:checked ~ .toolbar label[for="pick-create"], #pick-update:checked ~ .toolbar label[for="pick-update"], #pick-delete:checked ~ .toolbar label[for="pick-delete"] { background: #fff; color: #204c87; box-shadow: 0 1px 4px #1a355b15; }
-    #pick-create:focus-visible ~ .toolbar label[for="pick-create"], #pick-update:focus-visible ~ .toolbar label[for="pick-update"], #pick-delete:focus-visible ~ .toolbar label[for="pick-delete"] { outline: 3px solid #2969bf; outline-offset: 2px; }
+    #pick-create:checked ~ .toolbar label[for="pick-create"], #pick-update:checked ~ .toolbar label[for="pick-update"], #pick-delete:checked ~ .toolbar label[for="pick-delete"], #pick-search:checked ~ .toolbar label[for="pick-search"] { background: #fff; color: #204c87; box-shadow: 0 1px 4px #1a355b15; }
+    #pick-create:focus-visible ~ .toolbar label[for="pick-create"], #pick-update:focus-visible ~ .toolbar label[for="pick-update"], #pick-delete:focus-visible ~ .toolbar label[for="pick-delete"], #pick-search:focus-visible ~ .toolbar label[for="pick-search"] { outline: 3px solid #2969bf; outline-offset: 2px; }
     .legend { display: flex; flex-wrap: wrap; gap: 12px; color: #596a80; font-size: 12px; }
     .legend span { display: inline-flex; align-items: center; gap: 6px; }
     .dot { width: 10px; height: 10px; border-radius: 3px; border: 1px solid; }
@@ -28,7 +28,7 @@
     .dash { width: 18px; border-top: 2px dashed #68778c; }
     .canvas { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
     .diagram { display: none; }
-    #pick-create:checked ~ .canvas .diagram-create, #pick-update:checked ~ .canvas .diagram-update, #pick-delete:checked ~ .canvas .diagram-delete { display: block; }
+    #pick-create:checked ~ .canvas .diagram-create, #pick-update:checked ~ .canvas .diagram-update, #pick-delete:checked ~ .canvas .diagram-delete, #pick-search:checked ~ .canvas .diagram-search { display: block; }
     .diagram-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 18px; padding: 20px 26px 4px; }
     h2 { margin: 0; font-size: 18px; letter-spacing: -.03em; }
     .diagram-heading p { margin: 0; color: var(--muted); font-size: 12px; }
@@ -61,21 +61,29 @@
     details { margin-top: 20px; color: #62738a; font-size: 12px; }
     summary { cursor: pointer; padding: 8px 0; }
     details ul { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-left: 18px; }
+    .walkthrough { margin: 20px 26px 24px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafd; font-size: 13px; }
+    .walkthrough > summary { padding: 12px 16px; color: #354b69; font-weight: 750; }
+    .example-body { padding: 0 16px 14px; }
+    .example-body p { margin: 8px 0; }
+    .example-body ol { margin: 12px 0; padding-left: 22px; }
+    .example-body li + li { margin-top: 10px; }
+    .example-note { color: #52637b; border-left: 2px solid #c8d3e2; padding-left: 12px; }
     a { color: #35629d; text-underline-offset: 3px; }
     .mobile-hint { display: none; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
-    @media (max-width: 720px) { main { width: calc(100% - 24px); margin: 22px auto; } .picker label { padding: 9px 22px; } .diagram-heading { padding: 18px 16px 4px; } .notes { grid-template-columns: 1fr; gap: 0; } .mobile-hint { display: block; } .legend { gap: 9px; } }
-    @media print { body { background: #fff; } main { width: 100%; margin: 0; } .toolbar, .mobile-hint, details { display: none; } .diagram { display: block !important; break-after: page; } .canvas { border: 0; } svg { min-width: 0; } .graph-scroll { overflow: visible; } }
+    @media (max-width: 720px) { main { width: calc(100% - 24px); margin: 22px auto; } .picker label { padding: 9px 18px; } .diagram-heading { padding: 18px 16px 4px; } .walkthrough { margin: 16px; } .notes { grid-template-columns: 1fr; gap: 0; } .mobile-hint { display: block; } .legend { gap: 9px; } }
+    @media print { body { background: #fff; } main { width: 100%; margin: 0; } .toolbar, .mobile-hint, details:not(.walkthrough) { display: none; } .diagram { display: block !important; break-after: page; } .walkthrough { break-inside: avoid; } .canvas { border: 0; } svg { min-width: 0; } .graph-scroll { overflow: visible; } }
   </style>
 </head>
 <body>
   <main>
-    <header><div><p class="eyebrow">AX-WMS · API → AI</p><h1>업무일지 인덱싱 흐름도</h1></div><p class="meta">등록 Outbox 반영 · 2026-10-18 · 미커밋 작업트리 기준</p></header>
+    <header><div><p class="eyebrow">AX-WMS · API → AI</p><h1>업무일지 인덱싱·검색 흐름도</h1></div><p class="meta">PG 저장소·검색 반영 · 2026-10-21 · 현재 코드 기준</p></header>
     <fieldset>
       <legend class="sr-only">조회할 업무일지 작업 선택</legend>
       <input class="sr-only" type="radio" name="flow" id="pick-create" checked>
       <input class="sr-only" type="radio" name="flow" id="pick-update">
       <input class="sr-only" type="radio" name="flow" id="pick-delete">
-      <div class="toolbar"><div class="picker"><label for="pick-create">등록</label><label for="pick-update">수정</label><label for="pick-delete">삭제</label></div><div class="legend"><span><i class="dot dot-w" aria-hidden="true"></i>업무 락 W</span><span><i class="dot dot-s" aria-hidden="true"></i>공간 락 S</span><span><i class="dot dot-q" aria-hidden="true"></i>Outbox</span><span><i class="dash" aria-hidden="true"></i>별도 실행 / 결과 전달</span></div></div>
+      <input class="sr-only" type="radio" name="flow" id="pick-search">
+      <div class="toolbar"><div class="picker"><label for="pick-create">등록</label><label for="pick-update">수정</label><label for="pick-delete">삭제</label><label for="pick-search">검색</label></div><div class="legend"><span><i class="dot dot-w" aria-hidden="true"></i>업무 락 W</span><span><i class="dot dot-s" aria-hidden="true"></i>공간 락 S</span><span><i class="dot dot-q" aria-hidden="true"></i>Outbox</span><span><i class="dash" aria-hidden="true"></i>별도 실행 / 결과 전달</span></div></div>
       <div class="canvas"><section class="diagram diagram-create" aria-labelledby="heading-create"><div class="diagram-heading"><h2 id="heading-create">등록 흐름</h2><p>원본 + 등록 Outbox 커밋 → 워커 선점 → AI 직접 색인 → 성공 기록·재시도</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="등록 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 1330" role="img" aria-labelledby="create-title create-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="create-title">원본 + 등록 Outbox 커밋 → 워커 선점 → AI 직접 색인 → 성공 기록·재시도</title>
 <desc id="create-desc">색인 경로만 표시한 등록 흐름입니다. BEFORE_COMMIT에서 원본과 등록 작업을 함께 저장하고 API 내부 Outbox 워커가 미완료 색인을 직접 요청합니다. 보라색 W는 색인 전체, 노란 S는 단계별 공간 락입니다. 실패 단계는 재시도합니다. 다른 등록 후처리와 추가 요청 분기는 생략했으며 실제 완료 여부는 전체 후처리 결과로 판정합니다.</desc>
@@ -172,13 +180,13 @@
 </g>
 <g class="node normal" id="create-snapshot">
 <rect class="node-shape" x="40" y="500" width="200" height="76" rx="10"/>
-<text class="node-title" x="140" y="530" text-anchor="middle">원본 snapshot 저장</text>
-<text class="node-sub" x="140" y="553" text-anchor="middle">전역 문서에 원본 보존</text>
+<text class="node-title" x="140" y="530" text-anchor="middle">색인 팀 소유권 저장</text>
+<text class="node-sub" x="140" y="553" text-anchor="middle">PG doc-status · 팀 metadata</text>
 </g>
 <g class="node normal space-node" id="create-team">
 <rect class="node-shape" x="40" y="660" width="200" height="76" rx="10"/>
 <text class="node-title" x="140" y="690" text-anchor="middle">팀별 사본 반영</text>
-<text class="node-sub" x="140" y="713" text-anchor="middle">본문 → KG → snapshot · schema</text>
+<text class="node-sub" x="140" y="713" text-anchor="middle">팀 workspace: 본문 → 확정 KG</text>
 <rect class="space-badge" x="95" y="647" width="90" height="22" rx="6"/><text class="space-label" x="140" y="662" text-anchor="middle">공간 락 S</text>
 </g>
 <g class="node normal" id="create-cache">
@@ -228,7 +236,22 @@
 <text class="edge-label" x="740" y="1008" text-anchor="middle">모두 성공</text>
 <text class="edge-label" x="620" y="1096" text-anchor="middle">실패 단계 있음</text>
 <text class="edge-label" x="1100" y="1110" text-anchor="middle">원본 삭제됨</text>
-</svg></div><div class="notes"><p><strong>등록 전용 Outbox</strong><code>tb_worklog_ai_post_process_outbox</code>에 입력과 성공 단계를 보존합니다. 성공한 색인은 자동 재시도에서 반복하지 않습니다.</p><p><strong>색인 경로만 표시</strong>다른 등록 후처리와 추가 요청 상세는 생략했습니다. 실제 제품 동작은 변경하지 않았습니다.</p><p><strong>전체 결과로 완료 판정</strong>색인 성공은 해당 단계의 성공 기록입니다. Outbox 제거와 결과 알림은 전체 등록 후처리 결과를 기준으로 처리합니다.</p></div></section>
+</svg></div><div class="notes"><p><strong>등록 전용 Outbox</strong><code>tb_worklog_ai_post_process_outbox</code>에 입력과 성공 단계를 보존합니다. 성공한 색인은 자동 재시도에서 반복하지 않습니다.</p><p><strong>색인 경로만 표시</strong>다른 등록 후처리와 추가 요청 상세는 생략했습니다. 실제 제품 동작은 변경하지 않았습니다.</p><p><strong>전체 결과로 완료 판정</strong>색인 성공은 해당 단계의 성공 기록입니다. Outbox 제거와 결과 알림은 전체 등록 후처리 결과를 기준으로 처리합니다.</p></div>
+<details class="walkthrough">
+  <summary>예시로 따라가기 · 업무일지 1001 등록</summary>
+  <div class="example-body">
+    <p><strong>가상 데이터 · 독립 시나리오</strong> 각 탭은 별개의 시작 상태를 가정합니다. 실제 API 호출이나 DB 변경은 실행하지 않습니다.</p>
+    <p><strong>등록 입력:</strong> 팀 <code>101</code>, 제목 “재고 조회 API 개선”, 본문 “재고 조회 API의 응답 구조를 정리했다.” 등록 후 발급된 업무일지 ID를 <code>1001</code>로 가정합니다.</p>
+    <ol>
+      <li><strong>업무 DB + 등록 Outbox:</strong> 새 업무일지 <code>1001</code>과 등록 후처리 작업을 같은 트랜잭션에 기록합니다. 저장이 함께 커밋되면 사용자는 등록 응답을 받으며, AI 완료까지 기다리지 않습니다.</li>
+      <li><strong>워커 → 전역 색인:</strong> 워커가 작업을 선점하고 AI에 <code>1001</code> 색인을 요청합니다. AI는 최신 업무 DB 원본을 읽어 전역 본문을 색인하고 <code>processed</code>를 확인한 뒤 확정 KG를 반영합니다. 문서·청크는 PG, 벡터는 Qdrant, 그래프는 Neo4j에 반영됩니다.</li>
+      <li><strong>색인 당시 팀 기록 → 팀 사본:</strong> 전역 PG doc-status에 <code>metadata.indexed_team_id=101</code>을 기록한 뒤 팀 <code>101</code> workspace에도 본문·KG를 반영합니다. 이 값은 업무 원문 snapshot이 아니라 이후 삭제에 필요한 팀 소유권입니다.</li>
+      <li><strong>결과:</strong> 전역·팀 색인이 성공하면 <code>indexed=true</code> 결과와 검색 캐시 버전 갱신을 반영합니다. API는 성공 단계를 기록하고, 나머지 등록 후처리까지 완료됐는지 확인해 작업 완료·알림을 처리합니다.</li>
+    </ol>
+    <p class="example-note"><strong>중간 실패라면?</strong> 팀 색인에서 실패해도 앞서 반영된 전역 데이터가 자동 롤백되지는 않습니다. 실패 단계는 재시도 대상이며, 색인 단계의 성공과 등록 후처리 전체의 완료는 구분합니다.</p>
+  </div>
+</details>
+</section>
 <section class="diagram diagram-update" aria-labelledby="heading-update"><div class="diagram-heading"><h2 id="heading-update">수정 흐름</h2><p>DB 수정 + Outbox 기록 → 워커 선점 → AI에서 기존 문서 삭제·재색인 → 완료·재시도</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="수정 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 940" role="img" aria-labelledby="update-title update-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="update-title">DB 수정 + Outbox 기록 → 워커 선점 → AI에서 기존 문서 삭제·재색인 → 완료·재시도</title>
 <desc id="update-desc">API 영역은 위쪽, AI 영역은 아래쪽입니다. 보라색 점선 영역은 업무 락 W를 유지하는 구간이고, 노란 S 표시는 해당 반영 단계의 공간 락입니다. DB 수정 + Outbox 기록 → 워커 선점 → AI에서 기존 문서 삭제·재색인 → 완료·재시도</desc>
@@ -310,7 +333,7 @@
 <g class="node normal space-node" id="update-team-delete">
 <rect class="node-shape" x="760" y="500" width="200" height="76" rx="10"/>
 <text class="node-title" x="860" y="530" text-anchor="middle">기존 팀 문서 삭제</text>
-<text class="node-sub" x="860" y="553" text-anchor="middle">색인 당시 소유 팀 기준</text>
+<text class="node-sub" x="860" y="553" text-anchor="middle">PG metadata의 색인 당시 팀</text>
 <rect class="space-badge" x="815" y="487" width="90" height="22" rx="6"/><text class="space-label" x="860" y="502" text-anchor="middle">공간 락 S</text>
 </g>
 <g class="node normal space-node" id="update-global-delete">
@@ -332,7 +355,7 @@
 </g>
 <g class="node normal space-node" id="update-team">
 <rect class="node-shape" x="40" y="660" width="200" height="76" rx="10"/>
-<text class="node-title" x="140" y="690" text-anchor="middle">snapshot · 팀 사본 반영</text>
+<text class="node-title" x="140" y="690" text-anchor="middle">소유권 → 팀 사본 반영</text>
 <text class="node-sub" x="140" y="713" text-anchor="middle">팀 본문 · KG는 각각 공간 락</text>
 <rect class="space-badge" x="95" y="647" width="90" height="22" rx="6"/><text class="space-label" x="140" y="662" text-anchor="middle">공간 락 S</text>
 </g>
@@ -359,7 +382,22 @@
 <text class="edge-label" x="740" y="112" text-anchor="middle">예</text>
 <text class="edge-label" x="650" y="211" text-anchor="middle">아니요</text>
 <text class="edge-label" x="1100" y="442" text-anchor="middle">AI로 전달</text>
-</svg></div></section>
+</svg></div>
+<details class="walkthrough">
+  <summary>예시로 따라가기 · 업무일지 1001 본문 수정</summary>
+  <div class="example-body">
+    <p><strong>가상 데이터 · 독립 시나리오</strong> 업무일지 <code>1001</code>이 팀 <code>101</code>에 이미 저장·색인된 상태에서 시작합니다. 다른 탭의 예시를 먼저 실행할 필요는 없습니다.</p>
+    <p><strong>변경 전 → 후:</strong> 제목은 “재고 조회 API 개선” 그대로, 본문은 “재고 조회 API의 응답 구조를 정리했다.” → “페이지 단위 조회와 응답 필드를 정리했다.”로 바꿉니다.</p>
+    <ol>
+      <li><strong>업무 DB 수정 + REINDEX:</strong> 본문이 색인 입력이므로 업무 DB를 수정하면서 재색인 Outbox를 기록합니다. 커밋 후 사용자에게 수정 결과를 먼저 응답합니다.</li>
+      <li><strong>기존 색인 정리:</strong> AI는 업무 <code>1001</code>의 변경 락 W를 유지하면서 PG metadata의 <code>indexed_team_id=101</code>을 확인합니다. 기존 팀 <code>101</code> 문서를 먼저 지우고 전역 문서를 지우며, 삭제 오류와 레코드 잔존을 확인합니다.</li>
+      <li><strong>최신 본문으로 다시 색인:</strong> 삭제에 성공한 문서만 업무 DB에서 다시 읽습니다. 바뀐 본문으로 전역 본문·KG를 만들고 팀 소유권과 팀 사본을 다시 반영합니다.</li>
+      <li><strong>결과:</strong> 색인 성공 결과를 받은 API가 해당 Outbox 작업을 완료 처리하고, 검색 캐시 버전도 갱신됩니다. 이후 팀 검색의 현재 원문에는 “페이지 단위 조회와 응답 필드를 정리했다.”가 사용됩니다.</li>
+    </ol>
+    <p class="example-note"><strong>팀 문서 삭제가 실패하면?</strong> 해당 문서의 전역 소유권을 보존하고 삽입을 중단해 재시도합니다. 업무 DB 수정까지 되돌리거나 이미 삭제한 이전 색인을 자동 복원하는 흐름은 아닙니다.</p>
+  </div>
+</details>
+</section>
 <section class="diagram diagram-delete" aria-labelledby="heading-delete"><div class="diagram-heading"><h2 id="heading-delete">삭제 흐름</h2><p>DB 소프트 삭제 + Outbox 기록 → 워커 선점 → AI에서 팀·전역 문서 삭제 → 완료·재시도</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="삭제 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 940" role="img" aria-labelledby="delete-title delete-desc" xmlns="http://www.w3.org/2000/svg">
 <title id="delete-title">DB 소프트 삭제 + Outbox 기록 → 워커 선점 → AI에서 팀·전역 문서 삭제 → 완료·재시도</title>
 <desc id="delete-desc">API 영역은 위쪽, AI 영역은 아래쪽입니다. 보라색 점선 영역은 업무 락 W를 유지하는 구간이고, 노란 S 표시는 해당 반영 단계의 공간 락입니다. DB 소프트 삭제 + Outbox 기록 → 워커 선점 → AI에서 팀·전역 문서 삭제 → 완료·재시도</desc>
@@ -427,7 +465,7 @@
 <g class="node normal" id="delete-owner">
 <rect class="node-shape" x="760" y="500" width="200" height="76" rx="10"/>
 <text class="node-title" x="860" y="530" text-anchor="middle">색인 당시 팀 확인</text>
-<text class="node-sub" x="860" y="553" text-anchor="middle">저장된 원본 snapshot 조회</text>
+<text class="node-sub" x="860" y="553" text-anchor="middle">PG doc-status 소유권 조회</text>
 </g>
 <g class="node normal space-node" id="delete-team-delete">
 <rect class="node-shape" x="520" y="500" width="200" height="76" rx="10"/>
@@ -463,10 +501,178 @@
 </g>
 <text class="edge-label" x="860" y="205" text-anchor="middle">커밋 후 별도 실행</text>
 <text class="edge-label" x="1100" y="445" text-anchor="middle">내부 인증 · 요청 검증</text>
-</svg></div></section></div>
+</svg></div>
+<details class="walkthrough">
+  <summary>예시로 따라가기 · 업무일지 1001 삭제</summary>
+  <div class="example-body">
+    <p><strong>가상 데이터 · 독립 시나리오</strong> “재고 조회 API 개선” 업무일지 <code>1001</code>이 팀 <code>101</code>의 전역·팀 workspace에 색인돼 있다고 가정합니다. 다른 탭의 등록·수정 예시와 독립적입니다.</p>
+    <ol>
+      <li><strong>업무 DB 소프트 삭제 + DELETE:</strong> 업무 원본을 소프트 삭제하면서 삭제 Outbox를 같은 트랜잭션에 기록합니다. 사용자 삭제 응답은 AI 저장소 정리의 완료를 뜻하지 않습니다.</li>
+      <li><strong>원본 대신 저장된 소유권 확인:</strong> 원본이 이미 삭제됐더라도 전역 PG doc-status의 <code>metadata.indexed_team_id=101</code>로 색인 당시 팀을 찾습니다. 삭제된 업무의 현재 원문을 복원해서 읽는 단계가 아닙니다.</li>
+      <li><strong>팀 먼저 → 전역 나중:</strong> 팀 <code>101</code> workspace에서 <code>1001</code>을 지운 뒤 전역 workspace에서도 정리합니다. PG 삭제 오류를 전파하고 레코드 잔존을 검사하며, 벡터·그래프·문서 상태 정리 결과를 확인합니다.</li>
+      <li><strong>결과:</strong> 삭제 성공 결과에 따라 캐시 버전을 갱신하고 API의 삭제 Outbox 작업을 완료 처리합니다. 삭제된 업무는 현재 업무 DB 재검증을 거치는 팀 검색 문맥에서도 제외됩니다.</li>
+    </ol>
+    <p class="example-note"><strong>팀 정리가 실패하면?</strong> 전역 소유권을 먼저 지우지 않고 실패를 반환해 재시도합니다. 여러 저장소에 걸친 삭제 전체가 하나의 트랜잭션으로 롤백되는 것은 아닙니다.</p>
+  </div>
+</details>
+</section>
+<section class="diagram diagram-search" aria-labelledby="heading-search"><div class="diagram-heading"><h2 id="heading-search">검색 흐름</h2><p>허용 팀으로 사전 격리 · 전사 범위만 Redis 응답 캐시 사용</p></div><div class="graph-scroll" tabindex="0" role="region" aria-label="검색 흐름 그래프, 좁은 화면에서는 가로로 스크롤"><svg viewBox="0 0 1280 1220" role="img" aria-labelledby="search-title search-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="search-title">권한 범위별 팀 검색과 전사 검색</title>
+<desc id="search-desc">사용자 REST는 API 권한과 가시성 확인 후 AI 내부 query로 전달합니다. 팀 검색은 허용 workspace의 후보, PG processed 상태, 현재 업무 DB를 검증해 허용 원문으로 답합니다. 전사는 Redis exact와 semantic 캐시를 확인하고 miss일 때 전역 LightRAG로 답합니다. 검색은 변경 락 W와 S를 사용하지 않습니다.</desc>
+<defs><marker id="arrow-search" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#68778c"/></marker></defs>
+<rect class="lane-bg" x="20" y="62" width="1220" height="270" rx="14"/>
+<text class="lane-label" x="34" y="41">API SERVER → AI SERVER · 권한과 범위</text>
+<text class="lane-caption" x="40" y="318">DIRECTOR: All(null) · DEPT_HEAD: Department · TEAM_LEAD / MEMBER: MyTeams · 내부 토큰 인증</text>
+<rect class="lane-bg" x="20" y="412" width="1200" height="328" rx="14"/>
+<text class="lane-label" x="34" y="391">AI SERVER · 팀 범위 검색</text>
+<text class="lane-caption" x="40" y="716">팀 하나라도 실패하면 fail-closed · 전역 fallback 금지 · 업무 DB 장애 시 KG 본문으로 대체하지 않음</text>
+<rect class="lane-bg" x="20" y="882" width="1200" height="308" rx="14"/>
+<text class="lane-label" x="34" y="861">AI SERVER · 전사 검색</text>
+<text class="lane-caption" x="40" y="1173">전사는 팀 검색의 processed / 현재 DB 재검증 경로를 거치지 않음 · 캐시 장애는 검색 진행</text>
+<path class="edge" d="M 240 128 L 280 128" marker-end="url(#arrow-search)" data-from="search-request" data-to="search-policy"/>
+<path class="edge" d="M 480 128 L 520 128" marker-end="url(#arrow-search)" data-from="search-policy" data-to="search-scope"/>
+<path class="edge" d="M 720 128 L 760 128" marker-end="url(#arrow-search)" data-from="search-scope" data-to="search-http"/>
+<path class="edge" d="M 960 128 L 1000 128" marker-end="url(#arrow-search)" data-from="search-http" data-to="search-branch"/>
+<path class="edge" d="M 620 166 L 620 230" marker-end="url(#arrow-search)" data-from="search-scope" data-to="search-empty"/>
+<text class="edge-label" x="645" y="208" text-anchor="middle">[]</text>
+<path class="edge" d="M 1100 166 L 1100 350 L 140 350 L 140 450" marker-end="url(#arrow-search)" data-from="search-branch" data-to="search-teams"/>
+<text class="edge-label" x="620" y="338" text-anchor="middle">팀 ID 목록</text>
+<path class="edge" d="M 1200 128 L 1230 128 L 1230 820 L 140 820 L 140 920" marker-end="url(#arrow-search)" data-from="search-branch" data-to="search-global"/>
+<text class="edge-label" x="620" y="808" text-anchor="middle">null · 전사</text>
+<path class="edge" d="M 240 488 L 280 488" marker-end="url(#arrow-search)" data-from="search-teams" data-to="search-retrieve"/>
+<path class="edge" d="M 480 488 L 520 488" marker-end="url(#arrow-search)" data-from="search-retrieve" data-to="search-provenance"/>
+<path class="edge" d="M 720 488 L 760 488" marker-end="url(#arrow-search)" data-from="search-provenance" data-to="search-processed"/>
+<path class="edge" d="M 960 488 L 1000 488" marker-end="url(#arrow-search)" data-from="search-processed" data-to="search-current"/>
+<path class="edge" d="M 1100 526 L 1100 610" marker-end="url(#arrow-search)" data-from="search-current" data-to="search-context"/>
+<path class="edge" d="M 1000 648 L 960 648" marker-end="url(#arrow-search)" data-from="search-context" data-to="search-complete"/>
+<path class="edge" d="M 240 958 L 280 958" marker-end="url(#arrow-search)" data-from="search-global" data-to="search-exact"/>
+<path class="edge" d="M 480 958 L 520 958" marker-end="url(#arrow-search)" data-from="search-exact" data-to="search-semantic"/>
+<text class="edge-label" x="500" y="947" text-anchor="middle">miss</text>
+<path class="edge" d="M 720 958 L 760 958" marker-end="url(#arrow-search)" data-from="search-semantic" data-to="search-rag"/>
+<text class="edge-label" x="740" y="947" text-anchor="middle">miss</text>
+<path class="edge" d="M 960 958 L 1000 958" marker-end="url(#arrow-search)" data-from="search-rag" data-to="search-put"/>
+<path class="edge" d="M 1100 996 L 1100 1080" marker-end="url(#arrow-search)" data-from="search-put" data-to="search-answer"/>
+<path class="edge" d="M 380 996 L 380 1118 L 1000 1118" marker-end="url(#arrow-search)" data-from="search-exact" data-to="search-answer"/>
+<text class="edge-label" x="480" y="1107" text-anchor="middle">hit: 검색 생략</text>
+<path class="edge" d="M 620 996 L 620 1080 L 1000 1080 L 1000 1118" marker-end="url(#arrow-search)" data-from="search-semantic" data-to="search-answer"/>
+<text class="edge-label" x="760" y="1068" text-anchor="middle">hit: 검색 생략</text>
+<g class="node normal" id="search-request">
+<rect class="node-shape" x="40" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="120" text-anchor="middle">사용자 REST 검색</text>
+<text class="node-sub" x="140" y="143" text-anchor="middle">GET …/search/semantic</text>
+</g>
+<g class="node normal" id="search-policy">
+<rect class="node-shape" x="280" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="120" text-anchor="middle">API 권한 · 가시성</text>
+<text class="node-sub" x="380" y="143" text-anchor="middle">역할 → 허용 팀 계산</text>
+</g>
+<g class="node normal" id="search-scope">
+<rect class="node-shape" x="520" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="120" text-anchor="middle">허용 범위 전달</text>
+<text class="node-sub" x="620" y="143" text-anchor="middle">allowed_team_ids</text>
+</g>
+<g class="node normal" id="search-http">
+<rect class="node-shape" x="760" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="120" text-anchor="middle">AI 내부 query 호출</text>
+<text class="node-sub" x="860" y="143" text-anchor="middle">POST …/worklogs-v4/query</text>
+</g>
+<g class="node decision" id="search-branch">
+<rect class="node-shape" x="1000" y="90" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="120" text-anchor="middle">검색 범위 분기</text>
+<text class="node-sub" x="1100" y="143" text-anchor="middle">팀 목록 또는 null</text>
+</g>
+<g class="node result" id="search-empty">
+<rect class="node-shape" x="520" y="230" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="260" text-anchor="middle">허용 팀 없음: 빈 결과</text>
+<text class="node-sub" x="620" y="283" text-anchor="middle">[] → AI 호출하지 않음</text>
+</g>
+<g class="node normal" id="search-teams">
+<rect class="node-shape" x="40" y="450" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="480" text-anchor="middle">허용 팀 workspace</text>
+<text class="node-sub" x="140" y="503" text-anchor="middle">팀 범위는 Redis 캐시 우회</text>
+</g>
+<g class="node normal" id="search-retrieve">
+<rect class="node-shape" x="280" y="450" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="480" text-anchor="middle">팀별 후보 병렬 검색</text>
+<text class="node-sub" x="380" y="503" text-anchor="middle">aquery_data · 팀별 top_k</text>
+</g>
+<g class="node normal" id="search-provenance">
+<rect class="node-shape" x="520" y="450" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="480" text-anchor="middle">업무 ID 출처 추적</text>
+<text class="node-sub" x="620" y="503" text-anchor="middle">후보 provenance → 업무 ID</text>
+</g>
+<g class="node normal" id="search-processed">
+<rect class="node-shape" x="760" y="450" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="480" text-anchor="middle">PG processed 확인</text>
+<text class="node-sub" x="860" y="503" text-anchor="middle">팀별 doc-status 상태 검증</text>
+</g>
+<g class="node normal" id="search-current">
+<rect class="node-shape" x="1000" y="450" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="480" text-anchor="middle">현재 업무 DB 재검증</text>
+<text class="node-sub" x="1100" y="503" text-anchor="middle">현재 소속 · 업무/팀 삭제 여부</text>
+</g>
+<g class="node normal" id="search-context">
+<rect class="node-shape" x="1000" y="610" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="640" text-anchor="middle">허용 원문으로 문맥 구성</text>
+<text class="node-sub" x="1100" y="663" text-anchor="middle">접근 가능한 선행업무만 포함</text>
+</g>
+<g class="node result" id="search-complete">
+<rect class="node-shape" x="760" y="610" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="640" text-anchor="middle">팀 답변·참조 반환</text>
+<text class="node-sub" x="860" y="663" text-anchor="middle">complete_scoped → REST 응답</text>
+</g>
+<g class="node normal" id="search-global">
+<rect class="node-shape" x="40" y="920" width="200" height="76" rx="10"/>
+<text class="node-title" x="140" y="950" text-anchor="middle">전사 범위 · null</text>
+<text class="node-sub" x="140" y="973" text-anchor="middle">전역 workspace 검색</text>
+</g>
+<g class="node normal" id="search-exact">
+<rect class="node-shape" x="280" y="920" width="200" height="76" rx="10"/>
+<text class="node-title" x="380" y="950" text-anchor="middle">Redis exact 조회</text>
+<text class="node-sub" x="380" y="973" text-anchor="middle">버전 · 질의 signature</text>
+</g>
+<g class="node normal" id="search-semantic">
+<rect class="node-shape" x="520" y="920" width="200" height="76" rx="10"/>
+<text class="node-title" x="620" y="950" text-anchor="middle">Redis semantic 조회</text>
+<text class="node-sub" x="620" y="973" text-anchor="middle">질의 embedding · 유사도</text>
+</g>
+<g class="node normal" id="search-rag">
+<rect class="node-shape" x="760" y="920" width="200" height="76" rx="10"/>
+<text class="node-title" x="860" y="950" text-anchor="middle">전역 LightRAG 검색</text>
+<text class="node-sub" x="860" y="973" text-anchor="middle">aquery_llm · mode=mix</text>
+</g>
+<g class="node normal" id="search-put">
+<rect class="node-shape" x="1000" y="920" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="950" text-anchor="middle">Redis 응답 저장</text>
+<text class="node-sub" x="1100" y="973" text-anchor="middle">캐시 사용 가능 시 저장</text>
+</g>
+<g class="node result" id="search-answer">
+<rect class="node-shape" x="1000" y="1080" width="200" height="76" rx="10"/>
+<text class="node-title" x="1100" y="1110" text-anchor="middle">답변 · references</text>
+<text class="node-sub" x="1100" y="1133" text-anchor="middle">사용자 REST JSON 응답</text>
+</g>
+</svg></div>
+<details class="walkthrough">
+  <summary>예시로 따라가기 · “재고 조회 API는 어떻게 개선했어?”</summary>
+  <div class="example-body">
+    <p><strong>가상 데이터 · 독립 시나리오</strong> 검색할 업무는 아직 삭제되지 않은 상태입니다. 삭제 탭 예시의 다음 단계가 아닙니다. 아래 답변 문구는 실제 LLM 실행 결과가 아닌 설명용 예시입니다.</p>
+    <p><strong>검색 대상:</strong> 업무일지 <code>1001</code>은 팀 <code>101</code>의 “재고 조회 API 개선”, 본문은 “재고 조회 API의 응답 구조를 정리했다.”입니다. 별도로 팀 <code>202</code>에는 업무일지 <code>2002</code> “재고 장애 대응”이 있으며, 둘 다 <code>processed</code> 상태라고 가정합니다.</p>
+    <ol>
+      <li><strong>허용 범위 계산:</strong> API가 질문자의 가시성을 확인한 결과를 <code>allowed_team_ids=[101]</code>로 가정합니다. 팀 <code>202</code>는 허용 범위에 없으며, 팀 검색은 Redis 응답 캐시를 우회합니다.</li>
+      <li><strong>후보 검색:</strong> 팀 <code>101</code> workspace에서만 검색하고, 후보의 provenance로 업무일지 <code>1001</code>을 찾았다고 가정합니다. 같은 “재고” 주제라도 팀 <code>202</code>의 <code>2002</code>를 검색 문맥에 섞지 않습니다.</li>
+      <li><strong>현재 상태 재검증:</strong> PG의 <code>processed</code> 상태와 업무 DB의 현재 원본을 확인합니다. <code>1001</code>이 미삭제·팀 <code>101</code> 소속일 때만 현재 본문과 접근 가능한 선행업무를 답변 문맥에 넣습니다.</li>
+      <li><strong>답변·참조:</strong> 허용 문맥으로 답변을 생성합니다. 설명용 답변은 “재고 조회 API의 응답 구조를 정리했습니다.”, 참조는 업무일지 <code>1001</code>입니다. API 사용자는 REST JSON 응답을 받습니다.</li>
+    </ol>
+    <p class="example-note"><strong>전사 검색이라면?</strong> 권한 계산 결과가 <code>allowed_team_ids=null</code>인 경우만 Redis exact → semantic 캐시를 확인합니다. 캐시 hit이면 답변·참조를 반환하고, miss이면 전역 LightRAG 검색을 진행합니다. 팀 <code>202</code>도 검색 대상이 될 수 있지만 반드시 결과에 포함되는 것은 아닙니다. 전사는 위 팀별 재검증 경로와 구분합니다.</p>
+    <p class="example-note"><strong>빈 범위·오래된 후보라면?</strong> 허용 팀이 <code>[]</code>이면 API는 AI를 호출하지 않으며 AI 내부도 빈 결과로 종료합니다. 팀 후보가 미완료이거나 현재 삭제·다른 팀 소속이면 문맥에서 제외합니다. 팀 검색 실패를 전사 검색으로 우회하지 않습니다.</p>
+  </div>
+</details>
+</section></div>
     </fieldset>
     <p class="mobile-hint">그래프는 가로로 밀어서 볼 수 있습니다. 각 선의 화살표 방향을 따라 읽어주세요.</p>
-    <div class="notes"><p><strong>W는 업무 전체, S는 각 변경 단계</strong>W는 획득부터 해제까지 유지합니다. S는 해당 단계마다 획득·해제하며, snapshot·schema 게시 전체에 유지되는 락이 아닙니다.</p><p><strong>AI 락은 프로세스 내부용</strong>W·S는 같은 이벤트 루프에서만 공유됩니다. 원본 DB의 @Version, Outbox의 선점·lease와는 다른 보호 장치입니다.</p><p><strong>현재 구현의 실행·복구 경로</strong>인덱싱 설정 활성화 기준이며 운영 부하는 측정하지 않았습니다. 재색인 삭제 실패는 해당 문서의 삽입을 중단합니다.</p></div>
+    <div class="notes"><p><strong>W는 업무 전체, S는 각 변경 단계</strong>W는 획득부터 해제까지 유지합니다. S는 해당 변경 단계마다 획득·해제합니다. 검색은 W·S를 사용하지 않으며 다중 저장소의 동일 시점 snapshot을 보장하지 않습니다.</p><p><strong>AI 락은 프로세스 내부용</strong>W·S는 같은 이벤트 루프에서만 공유됩니다. 원본 DB의 @Version, Outbox의 선점·lease와는 다른 보호 장치입니다.</p><p><strong>현재 구현의 실행·복구 경로</strong>인덱싱 설정 활성화 기준이며 운영 부하는 측정하지 않았습니다. 재색인 삭제 실패는 해당 문서의 삽입을 중단합니다. 이전 색인은 자동 복원하지 않습니다. PG 삭제 오류 전파·잔존 레코드 후조건을 확인하며 팀 삭제 실패 시 전역 소유권을 보존합니다.</p></div>
+    <div class="notes"><p><strong>PostgreSQL로 옮긴 책임</strong><code>PGKVStorage</code>는 본문·청크·추출/응답 캐시·삭제 추적을, <code>PGDocStatusStorage</code>는 상태와 metadata를 저장합니다. 전역 <code>doc_status.metadata.indexed_team_id</code>만 색인 당시 팀 소유권으로 보존합니다. 앱 전용 원본 snapshot·schema marker는 저장하지 않습니다.</p><p><strong>서로 다른 저장소</strong>Qdrant는 벡터, Neo4j는 그래프, 업무 원본 DB는 현재 업무 데이터, Redis는 검색 응답 캐시입니다. PG의 LightRAG 내부 캐시와 Redis 응답 캐시는 별개입니다. 전역·팀은 workspace로 구분합니다.</p><p><strong>마이그레이션 · 최신성 한계</strong>JSON 일괄 이관이 아니라 새 workspace 전체 재색인으로 전환합니다. 팀 검색도 과거 색인과 최신 원문이 섞일 수 있으며 다중 SQL·저장소의 동일 시점 snapshot을 보장하지 않습니다.</p></div>
+    <div class="notes"><p><strong>팀 검색의 결과 범위</strong>허용 팀별 top_k 후보를 합치므로 전사 단일 검색의 global top-k와 같은 계약이 아닙니다. 현재 DB에서 소속·삭제 여부가 확인된 업무와 접근 가능한 선행업무만 문맥에 사용합니다.</p><p><strong>사용자 REST ≠ 내부 SSE</strong>사용자는 <code>GET /api/worklogs/search/semantic</code>의 JSON 응답을 받습니다. AI 내부 <code>POST /ai/light/worklogs-v4/query/stream</code> SSE는 사용자 API 프록시가 없습니다. 검색·문맥 구성 완료 후 토큰 생성을 시작합니다.</p><p><strong>전사 캐시 조건</strong><code>allowed_team_ids=null</code>일 때만 Redis exact → semantic 조회·저장을 사용합니다. hit는 검색을 생략하며 팀 목록은 캐시를 우회합니다. 허용 팀이 비면 API는 AI를 호출하지 않으며, AI도 <code>allowed_team_ids=[]</code> 요청을 빈 결과로 즉시 반환합니다. 검색 자체는 W·S 락을 획득하지 않습니다.</p></div>
     <details><summary>코드 근거 보기</summary><ul>
       <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/WorklogService.java">업무 저장·변경</a></li>
       <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/WorklogAiPostProcessService.java">등록 후처리</a></li>
@@ -480,6 +686,15 @@
       <li><a href="../../../ai/app/light/v4/service/worklog_mutation_lock.py">업무·공간 락</a></li>
       <li><a href="../../../ai/app/light/v4/service/lightrag_adapter.py">LightRAG 변경 작업</a></li>
       <li><a href="../../../ai/app/light/v4/service/worklog_team_scope.py">팀별 사본</a></li>
+      <li><a href="../lightrag-postgres-setup.md">PG 전환·재색인</a></li>
+      <li><a href="../rag-team-prefilter.md">팀 사전 격리</a></li>
+      <li><a href="../../../ai/app/light/v4/router/worklog_query.py">AI query·내부 SSE</a></li>
+      <li><a href="../../../ai/app/light/v4/service/worklog_query_service.py">범위별 검색·현재 원문</a></li>
+      <li><a href="../../../ai/app/light/v4/service/worklog_query_cache.py">Redis 캐시</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/controller/WorklogController.java">사용자 검색·인가</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/service/search/LightRagWorklogSearchService.java">API 허용 팀 전달</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/policy/WorklogVisibilityPolicy.java">역할별 가시성</a></li>
+      <li><a href="../../../api/src/main/java/com/ibank/axwms/domain/worklog/external/LightRagWorklogSearchClient.java">AI 내부 query 클라이언트</a></li>
     </ul></details>
   </main>
 </body>
