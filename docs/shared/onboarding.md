@@ -45,7 +45,7 @@ cd api
 
 ### 3. web (Next.js)
 
-<스텁 — 추후 web 표준가이드(`docs/AX-WMS_NextJS_표준가이드.docx`) 참고>
+<스텁 — 추후 web 표준가이드(`docs/web/AX-WMS_NextJS_표준가이드.docx`) 참고>
 
 ```bash
 # 예시 (미확정)
@@ -58,7 +58,7 @@ npm run dev
 
 - 기준 문서: 루트 `AGENTS.md`, **`ai/AGENTS.md`** ("처음 시작하는 분께" 섹션에 셋업/테스트 절차 정리됨)
 - ADR/컨벤션: `docs/ai/adr.yaml`, `docs/ai/code-convention.yaml`
-- 표준 가이드: `docs/AX-WMS_FastAPI_표준가이드.docx` (디렉토리 구조와 prompt/chain 분리의 근거)
+- 표준 가이드: `docs/ai/AX-WMS_FastAPI_표준가이드.docx` (디렉토리 구조와 prompt/chain 분리의 근거)
 
 **셋업 (uv 기반, sudo 불필요)**
 
@@ -114,7 +114,7 @@ cd ai
 
 ### 5. nginx
 
-<스텁 — 추후 nginx 표준가이드(`docs/AX-WMS_Nginx_표준가이드.docx`) 참고>
+<스텁 — 추후 nginx 표준가이드(`docs/infra/AX-WMS_Nginx_표준가이드.docx`) 참고>
 
 ```bash
 # 예시 (미확정)
@@ -139,7 +139,7 @@ docker compose up
 
 | 문서 | 경로 |
 |---|---|
-| 아키텍처 가이드 | `docs/AX-WMS_기획서_아키텍처가이드.md` |
-| ERD 초안 | `docs/ax-wms-erd-draft.sql` |
+| 아키텍처 가이드 | `docs/architecture/AX-WMS_기획서_아키텍처가이드.md` |
+| ERD 초안 | `docs/database/ax-wms-erd-draft.sql` |
 | jOOQ codegen 정책 | `docs/api/jooq-codegen-policy.md` |
 | 도메인 용어 사전 | `docs/shared/glossary.md` |

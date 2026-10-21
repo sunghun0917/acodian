@@ -19,7 +19,7 @@
 | `ai` | FastAPI | AI 파이프라인 — 요약/태그/청킹/임베딩/시맨틱 검색 |
 | `nginx` | Nginx | 외부 진입 게이트웨이, 라우팅, 보안 경계 |
 
-전체 아키텍처 기준 문서: [`docs/AX-WMS_기획서_아키텍처가이드.md`](docs/AX-WMS_기획서_아키텍처가이드.md)
+전체 아키텍처 기준 문서: [`docs/architecture/AX-WMS_기획서_아키텍처가이드.md`](docs/architecture/AX-WMS_기획서_아키텍처가이드.md)
 
 ---
 
@@ -38,7 +38,7 @@
 
 | 문서 | 경로 |
 |---|---|
-| 표준 가이드 | `docs/AX-WMS_NextJS_표준가이드.docx` |
+| 표준 가이드 | `docs/web/AX-WMS_NextJS_표준가이드.docx` |
 | ADR | `docs/web/adr.yaml` _(추가 예정)_ |
 | 코드 컨벤션 | `docs/web/code-convention.yaml` _(추가 예정)_ |
 
@@ -46,7 +46,7 @@
 
 | 문서 | 경로 |
 |---|---|
-| 표준 가이드 | `docs/AX-WMS_FastAPI_표준가이드.docx` |
+| 표준 가이드 | `docs/ai/AX-WMS_FastAPI_표준가이드.docx` |
 | ADR | `docs/ai/adr.yaml` _(추가 예정)_ |
 | 코드 컨벤션 | `docs/ai/code-convention.yaml` _(추가 예정)_ |
 
@@ -54,7 +54,7 @@
 
 | 문서 | 경로 |
 |---|---|
-| 표준 가이드 | `docs/AX-WMS_Nginx_표준가이드.docx` |
+| 표준 가이드 | `docs/infra/AX-WMS_Nginx_표준가이드.docx` |
 | ADR | `docs/infra/adr.yaml` _(추가 예정)_ |
 | 코드 컨벤션 | `docs/infra/code-convention.yaml` _(추가 예정)_ |
 

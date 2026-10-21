@@ -69,7 +69,7 @@ AX-WMS는 본부/사업부/팀 단위의 조직 운영과 업무일지 관리를
 
 아키텍처 설명의 기준은 다음 순서를 따른다.
 
-1. `docs/ax-wms-erd-draft.sql`
+1. `docs/database/ax-wms-erd-draft.sql`
 2. 확정된 deep-interview / ralplan 산출물
 3. 기존 `.docx`의 재사용 가능한 설명
 
@@ -155,7 +155,7 @@ AX-WMS는 본부/사업부/팀 단위의 조직 운영과 업무일지 관리를
 
 ## 7. 도메인 모델 정렬 원칙
 
-본 문서는 `docs/ax-wms-erd-draft.sql`과 충돌하지 않아야 하며, 특히 다음 정책성 사실을 아키텍처 수준에서 유지해야 한다.
+본 문서는 `docs/database/ax-wms-erd-draft.sql`과 충돌하지 않아야 하며, 특히 다음 정책성 사실을 아키텍처 수준에서 유지해야 한다.
 
 ### 7.1 조직 구조
 
