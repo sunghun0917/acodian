@@ -28,7 +28,7 @@
 | `infra` | Nginx / Docker / GitLab CI/CD | 외부 진입 게이트웨이, 배포, 운영 자동화, 보안 경계 |
 
 전체 아키텍처 기준 문서:
-- `docs/AX-WMS_기획서_아키텍처가이드.md`
+- `docs/architecture/AX-WMS_기획서_아키텍처가이드.md`
 
 ## 4. 작업 전 공통 규칙
 

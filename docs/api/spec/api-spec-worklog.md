@@ -17,7 +17,7 @@
 - [api-spec-common.md](./api-spec-common.md)
 - [api-spec-index.md](./api-spec-index.md)
 - [adr.yaml](../adr.yaml)
-- [../../AX-WMS_기획서_아키텍처가이드.md](../../AX-WMS_기획서_아키텍처가이드.md)
+- [../../architecture/AX-WMS_기획서_아키텍처가이드.md](../../architecture/AX-WMS_기획서_아키텍처가이드.md)
 
 ## 4. 엔드포인트 목록
 | Method | Path | Status | 목적 |

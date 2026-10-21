@@ -1,69 +1,60 @@
-# 문서 구조 전략 (Documentation Structure Strategy)
+# 문서 구조 및 유지 규칙
 
-## 현재 기준
+문서의 진입점은 [docs/README.md](README.md)다. 업무 영역을 먼저 구분하고, 영역 안에서 규칙·명세·보고서·평가 자료를 분리한다.
 
-- ADR의 단일 기준 파일은 `docs/api/adr.yaml`
-- 컨벤션의 단일 기준 파일은 `docs/api/code-convention.yaml`
-- 호환용 컨벤션 미러 파일은 유지하지 않는다
-
-현재 구조:
+## 디렉터리 구조
 
 ```text
 docs/
-├── api/
-│   ├── README.md
-│   ├── adr.yaml
-│   ├── code-convention.yaml
-│   └── jooq-codegen-policy.md
-├── shared/
-├── sql/
-└── docs-strategy.md
+├── README.md                # 전체 문서 목차
+├── architecture/            # 통합 아키텍처 가이드 (Markdown 기준, Word 참고)
+├── database/                # ERD·데이터베이스 설계 초안
+├── api/                     # Spring Boot 규칙·개발 가이드
+│   ├── spec/                # 도메인별 API 명세와 인덱스
+│   └── report/              # 구현 검증 보고서·측정 원본
+├── web/                     # Next.js 규칙·디자인·협업 가이드
+│   └── inho/                # 기존 담당자별 작업·검토 기록
+├── ai/                      # FastAPI·LightRAG 규칙·가이드·조사
+│   ├── evaluation/          # 버전별 평가 데이터·스크립트·실행 결과
+│   └── report/              # 분석 보고서·흐름도·측정 원본
+├── infra/                   # 배포·CI/CD·라우팅·Nginx 가이드
+├── shared/                  # 온보딩·로컬 실행·보안·공통 용어
+├── superpowers/
+│   ├── specs/               # 작업별 설계서
+│   └── plans/               # 작업별 구현 계획
+├── images/                  # 공용 이미지
+├── archive/                 # 현재 기술 스택의 기준이 아닌 과거 문서
+├── docs-strategy.md         # 이 문서
+├── skills-reference.md      # 스킬 빠른 참조
+└── guidance-schema.md       # OMX가 참조하는 스키마 계약 (경로 유지)
 ```
 
-## 왜 단일 기준으로 유지하는가
+## 기준 문서
 
-- `AGENTS.md`와 Codex 스킬은 이미 `code-convention.yaml`을 기준으로 읽는다
-- 기준 파일이 둘이면 문서 drift가 반복되고, 리뷰 시 어느 파일이 진짜 기준인지 계속 확인해야 한다
-- 단일 source of truth가 있으면 문서 수정, 코드리뷰, 에이전트 로딩 경로를 모두 한 파일 기준으로 설명할 수 있다
+- 전체 아키텍처: [Markdown 가이드](architecture/AX-WMS_기획서_아키텍처가이드.md)
+- API 규칙: [ADR](api/adr.yaml) · [컨벤션](api/code-convention.yaml)
+- Web 규칙: [ADR](web/adr.yaml) · [컨벤션](web/code-convention.yaml)
+- AI 규칙: [ADR](ai/adr.yaml) · [컨벤션](ai/code-convention.yaml)
+- 인프라 규칙: [ADR](infra/adr.yaml) · [컨벤션](infra/code-convention.yaml)
 
-## 소비 경로
+각 영역의 규칙은 해당 영역 파일 한 곳에서 관리한다. 공통 규칙은 루트 `AGENTS.md`, 코드 작업의 추가 규칙은 각 코드 영역의 `AGENTS.md`를 따른다. 컨벤션 미러나 다른 영역 규칙의 사본을 만들지 않는다.
 
-- Codex / `AGENTS.md` / `.codex` 스킬: `docs/api/code-convention.yaml`
-- 온보딩 문서: `docs/shared/onboarding.md`
-- 정책 문서: `docs/api/jooq-codegen-policy.md`
+Word 가이드는 참고 자료다. 현재 API는 Spring Boot이므로 NestJS 가이드는 `archive/`에 보존한다. 날짜가 있는 설계·계획·작업 기록과 평가 보고서는 당시 맥락을 보존하며, 현재 구현 상태나 운영 규칙으로 자동 승격하지 않는다.
 
-README, onboarding, strategy 문서는 모두 `code-convention.yaml`을 직접 가리켜야 한다.
+## 추가·이동 규칙
 
-## 유지 규칙
-
-- 컨벤션 수정은 `docs/api/code-convention.yaml` 한 파일만 수정한다
-- ADR 변경과 컨벤션 연쇄 수정은 함께 검토한다
-- 새 모듈(`web`, `ai`, `nginx`)이 활성화되면 각 모듈도 `code-convention.yaml` 네이밍으로 맞춘다
-
-예시:
-
-```text
-docs/web/code-convention.yaml
-docs/ai/code-convention.yaml
-docs/infra/code-convention.yaml
-```
-
-## 분할 트리거
-
-현재는 단일 파일 전략을 유지한다. 다만 아래 상황이면 카테고리 또는 모듈 기준 분할을 검토한다.
-
-- `adr.yaml` 또는 `code-convention.yaml`이 40KB 이상으로 커질 때
-- 한 파일이 1000줄 이상으로 커질 때
-- `web`, `ai`, `nginx` 중 2개 이상이 활성화되어 독자 규칙이 생길 때
+1. 새 문서는 담당 영역에 추가한다. 여러 영역에서 함께 사용하는 내용만 `shared/`에 둔다.
+2. API 명세는 `api/spec/`, 보고서와 측정 근거는 해당 영역의 `report/`에 둔다. AI 평가 자료는 `ai/evaluation/`의 기존 버전 구조를 따른다.
+3. 영역 안내와 전체 목차에서 찾을 수 있도록 상대 링크를 추가한다. 폴더는 실제로 분류할 자료가 있을 때만 만든다.
+4. 문서 이동 시 Markdown 링크뿐 아니라 코드 블록·명령·설정·`AGENTS.md`·`CLAUDE.md` 등의 경로 참조도 확인한다. 실행 스크립트가 참조하는 자료는 탐색 편의를 위해 옮기지 않는다.
+5. 파일명·본문은 불필요하게 바꾸지 않는다. 과거 문서나 중복 후보도 확인 없이 삭제·병합하지 않는다.
+6. 평가 데이터, manifest, 실행 결과는 정리 목적으로 재생성하지 않는다. SQL은 분류 대상이지 실행 대상이 아니다.
+7. `.omx/` 등 자동 생성 영역은 수동 정리 대상에서 제외한다.
 
 ## 점검 체크리스트
 
-- `AGENTS.md`가 실제 기준 파일 경로를 가리키는가
-- README / onboarding / strategy 문서가 같은 경로를 가리키는가
-- 단일 기준 파일이 아닌 오래된 경로를 참조하는 문서가 남아 있지 않은가
-
-## 실무 원칙
-
-- 기준 파일은 하나만 둔다
-- 호환성 때문에 미러를 만들더라도 임시로만 두고, 가능한 빨리 참조를 통일한다
-- 문서 구조보다 에이전트와 사람이 같은 기준을 읽는가를 우선한다
+- [ ] 전체 목차와 영역 안내에서 문서를 찾을 수 있는가
+- [ ] 링크와 경로 참조가 실제 파일을 가리키는가
+- [ ] 영역별 ADR·컨벤션의 기준 경로가 하나로 유지되는가
+- [ ] 현재 규칙, 참고 가이드, 초안, 과거 기록이 구분되는가
+- [ ] 이동 전후 파일 내용과 평가 원본이 보존되는가
