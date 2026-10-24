@@ -208,12 +208,21 @@ class FakeLightRAG:
         for name in ("full_docs", "text_chunks", "full_entities", "full_relations", "entity_chunks",
                      "relation_chunks", "entities_vdb", "relationships_vdb", "chunks_vdb",
                      "chunk_entity_relation_graph"):
-            setattr(self, name, SimpleNamespace(workspace=self.workspace, effective_workspace=self.workspace))
+            setattr(self, name, SimpleNamespace(workspace=self.workspace, effective_workspace=self.workspace, get_by_id=self.get_empty))
         self.calls: list[Any] = []
         self.statuses = {}
-        self.doc_status = SimpleNamespace(get_by_ids=self.get_statuses, workspace=self.workspace)
+        self.doc_status = SimpleNamespace(get_by_ids=self.get_statuses, get_by_id=self.get_status, upsert=self.upsert_status, workspace=self.workspace)
         self.llm_response_cache = SimpleNamespace(workspace=kwargs.get("workspace", ""))
         FakeLightRAG.instances.append(self)
+
+    async def get_empty(self, key):
+        return None
+
+    async def get_status(self, key):
+        return self.statuses.get(key)
+
+    async def upsert_status(self, records):
+        self.statuses.update(records)
 
     async def get_statuses(self, ids):
         return [self.statuses.get(doc_id) for doc_id in ids]

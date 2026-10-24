@@ -17,7 +17,7 @@ DSN = "postgresql://rag:local-test-password@127.0.0.1:5544/axwms_lightrag"
 def isolated_pg_environment(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     for key in ("POSTGRES_WORKSPACE", "POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER",
-                "POSTGRES_PASSWORD", "POSTGRES_DATABASE", "POSTGRES_ENABLE_VECTOR"):
+                "POSTGRES_PASSWORD", "POSTGRES_DATABASE", "POSTGRES_ENABLE_VECTOR", "PGVECTOR_DSN"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -37,6 +37,7 @@ class StorageRag(FakeLightRAG):
             setattr(self, name, SimpleNamespace(workspace=self.workspace,
                                                 effective_workspace=self.workspace,
                                                 _client=None, _initialized=False,
+                                                get_by_id=self.get_status, upsert=self.upsert_status,
                                                 finalize=finalize))
 
 

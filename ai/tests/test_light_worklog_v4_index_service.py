@@ -30,6 +30,9 @@ def isolated_cache(monkeypatch):
 def isolated_team_pool(monkeypatch):
     """순서/오류 매핑 단위 테스트는 실제 팀 저장소에 연결하지 않는다."""
     class Pool:
+        def adapter_for(self, team_id):
+            return OwnershipAdapter()
+
         async def index_source_rows(self, rows):
             assert rows and all(row.team_id > 0 for row in rows)
 
@@ -40,10 +43,16 @@ class OwnershipAdapter:
     """기존 문서는 소유권 없는 fixture로, 새 문서의 snapshot 쓰기는 기록한다."""
 
     async def save_indexed_team_ids(self, teams):
-        self.saved_teams = teams
+        self.saved_teams = {**getattr(self, "saved_teams", {}), **teams}
 
-    async def get_document_team_id(self, doc_id):
+    async def get_document_team_id(self, doc_id, *, allow_missing=False):
         return None
+
+    async def set_document_indexing_status(self, document_id, state):
+        pass
+
+    async def delete_document(self, document_id):
+        pass
 
 
 @pytest.mark.parametrize("blocked_phase", ["source", "team"])
@@ -69,7 +78,7 @@ def test_delete_waits_for_source_read_and_team_index_publication(monkeypatch, bl
             async def save_indexed_team_ids(self, teams):
                 global_documents.add(101)
 
-            async def get_document_team_id(self, doc_id):
+            async def get_document_team_id(self, doc_id, *, allow_missing=False):
                 return 7 if global_documents else None
 
             async def index_documents(self, docs):
@@ -112,8 +121,8 @@ def test_delete_waits_for_source_read_and_team_index_publication(monkeypatch, bl
         finally:
             release_phase.set()
             await asyncio.gather(indexing, deleting)
-        prefix = ["delete"] if operation == "reindex" else []
-        assert calls == [*prefix, "source", "text", "kg", "team", "team_delete", "delete"]
+        assert calls == ["source", "team_delete", "delete", "text", "kg",
+                         "team", "team_delete", "delete"]
         assert not team_documents and not global_documents
 
     asyncio.run(run())
@@ -131,6 +140,15 @@ def test_native_unprocessed_body_skips_kg_snapshot_and_team_publication(monkeypa
             return {101: make_source_row(101)}
 
     class Adapter(LightRagWorklogIndexAdapter):
+        async def get_document_team_id(self, doc_id, *, allow_missing=False):
+            return None
+
+        async def set_document_indexing_status(self, document_id, state):
+            pass
+
+        async def delete_document(self, document_id):
+            pass
+
         async def index_custom_kg_documents(self, docs):
             calls.append("kg")
 
@@ -148,6 +166,9 @@ def test_native_unprocessed_body_skips_kg_snapshot_and_team_publication(monkeypa
         return SimpleNamespace(ainsert=insert, doc_status=SimpleNamespace(get_by_ids=statuses))
 
     class Pool:
+        def adapter_for(self, team_id):
+            return OwnershipAdapter()
+
         async def index_source_rows(self, rows):
             calls.append("team")
 
@@ -179,6 +200,15 @@ def test_failed_text_insert_invalidates_cache_when_native_may_have_written(monke
             return 2
 
     class Adapter(LightRagWorklogIndexAdapter):
+        async def get_document_team_id(self, doc_id, *, allow_missing=False):
+            return None
+
+        async def set_document_indexing_status(self, document_id, state):
+            pass
+
+        async def delete_document(self, document_id):
+            pass
+
         async def index_custom_kg_documents(self, docs):
             calls.append("kg")
 
@@ -194,7 +224,7 @@ def test_failed_text_insert_invalidates_cache_when_native_may_have_written(monke
         return "tracking-id"
 
     async def statuses(ids):
-        return [{"status": "processed"}, {"status": "failed"}]
+        return [{"status": "processed" if item == "worklog-101" else "failed"} for item in ids]
 
     async def initialized():
         return SimpleNamespace(ainsert=insert, doc_status=SimpleNamespace(get_by_ids=statuses))
@@ -204,10 +234,16 @@ def test_failed_text_insert_invalidates_cache_when_native_may_have_written(monke
     monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
     monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
     response = asyncio.run(LightWorklogIndexService(cache=Cache()).index_worklogs([101, 102]))
-    assert all(not item.indexed for item in response.items)
-    error = "LIGHTRAG_INSERT_TIMEOUT" if outcome == "timeout" else "LIGHTRAG_INSERT_FAILED"
-    assert all(item.error == error for item in response.items)
-    assert calls == ["body_written", "invalidate"]
+    if outcome == "mixed_status":
+        assert [(item.indexed, item.error) for item in response.items] == [
+            (True, None), (False, "LIGHTRAG_INSERT_FAILED"),
+        ]
+        assert calls == ["body_written", "kg", "snapshot", "body_written", "invalidate"]
+    else:
+        assert all(not item.indexed for item in response.items)
+        error = "LIGHTRAG_INSERT_TIMEOUT" if outcome == "timeout" else "LIGHTRAG_INSERT_FAILED"
+        assert all(item.error == error for item in response.items)
+        assert calls == ["body_written", "body_written", "invalidate"]
 
 
 def test_mutation_lock_cancelled_waiter_releases_partial_batch_and_reversed_ids_finish():
@@ -251,7 +287,7 @@ def test_prefilter_index_saves_ownership_before_team_writes_and_delete_cleans_bo
         async def fetch_source_rows(self, ids):
             return {101: make_source_row(101)}
 
-    class Adapter:
+    class Adapter(OwnershipAdapter):
         async def index_documents(self, docs):
             calls.append("legacy_text")
 
@@ -262,7 +298,7 @@ def test_prefilter_index_saves_ownership_before_team_writes_and_delete_cleans_bo
             assert teams == {101: 7}
             calls.append("ownership")
 
-        async def get_document_team_id(self, doc_id):
+        async def get_document_team_id(self, doc_id, *, allow_missing=False):
             assert doc_id == "worklog-101"
             return 7
 
@@ -296,7 +332,7 @@ def test_prefilter_index_saves_ownership_before_team_writes_and_delete_cleans_bo
 
     indexed, deleted = asyncio.run(run())
     assert indexed.items[0].indexed and deleted.items[0].deleted
-    assert calls == ["legacy_text", "legacy_kg", "ownership", "team_index",
+    assert calls == ["team_delete", "legacy_delete", "legacy_text", "legacy_kg", "ownership", "team_index",
                      "team_delete", "legacy_delete"]
 
 
@@ -308,7 +344,7 @@ def test_team_native_delete_failure_preserves_global_ownership(monkeypatch, stat
 
     calls = []
 
-    class GlobalAdapter:
+    class GlobalAdapter(OwnershipAdapter):
         async def get_document_team_id(self, doc_id):
             return 7
 
@@ -320,7 +356,7 @@ def test_team_native_delete_failure_preserves_global_ownership(monkeypatch, stat
         return DeletionResult(status=status, doc_id=doc_id, message="failed")
 
     async def initialized():
-        return SimpleNamespace(adelete_by_doc_id=native_delete)
+        return SimpleNamespace(adelete_by_doc_id=native_delete, doc_status=SimpleNamespace())
 
     team_adapter = LightRagWorklogIndexAdapter(settings_obj=Settings(_env_file=None))
     team_adapter._get_initialized_rag = initialized
@@ -361,10 +397,10 @@ def test_index_service_calls_text_and_custom_kg_from_one_source_fetch(monkeypatc
             self.custom_document_ids: list[str] = []
 
         async def index_documents(self, documents) -> None:
-            self.text_document_ids = [document.document_id for document in documents]
+            self.text_document_ids.extend(document.document_id for document in documents)
 
         async def index_custom_kg_documents(self, documents) -> None:
-            self.custom_document_ids = [document.document_id for document in documents]
+            self.custom_document_ids.extend(document.document_id for document in documents)
 
     async def run_case() -> None:
         adapter = _Adapter()
@@ -391,13 +427,12 @@ def test_index_service_maps_custom_kg_batch_failure_to_all_found_ids(monkeypatch
 
     class _Adapter(OwnershipAdapter):
         async def index_documents(self, documents) -> None:
-            assert [document.document_id for document in documents] == ["worklog-101", "worklog-103"]
+            assert len(documents) == 1
+            assert documents[0].document_id in {"worklog-101", "worklog-103"}
 
         async def index_custom_kg_documents(self, documents) -> None:
-            assert [document.document_id for document in documents] == [
-                "worklog-101",
-                "worklog-103",
-            ]
+            assert len(documents) == 1
+            assert documents[0].document_id in {"worklog-101", "worklog-103"}
             raise LightRagInsertTimeoutError("timeout")
 
     async def run_case() -> None:
@@ -511,9 +546,14 @@ def test_delete_service_deletes_documents_and_bumps_cache_version(monkeypatch) -
             self.bump_count += 1
             return 3
 
+    class _Reader:
+        async def fetch_source_rows(self, worklog_ids: list[int]):
+            return {}
+
     async def run_case() -> None:
         adapter = _Adapter()
         cache = _FakeCache()
+        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
         monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
 
         service = LightWorklogIndexService(cache=cache)  # type: ignore
@@ -567,8 +607,8 @@ def test_reindex_service_records_delete_failure_and_skips_insert(monkeypatch) ->
         response = await service.reindex_worklogs([101, 102])
 
         assert calls == [
-            "delete:worklog-101",
             "delete:worklog-102",
+            "delete:worklog-101",
             "index_docs:['worklog-101']",
             "index_kg:['worklog-101']",
             "bump_version",
@@ -582,7 +622,7 @@ def test_reindex_service_records_delete_failure_and_skips_insert(monkeypatch) ->
     asyncio.run(run_case())
 
 
-def test_reindex_service_all_delete_failures_does_not_bump_and_returns_errors(monkeypatch) -> None:
+def test_reindex_service_all_delete_failures_invalidates_cache_and_returns_errors(monkeypatch) -> None:
     calls: list[str] = []
 
     class _Adapter(OwnershipAdapter):
@@ -604,9 +644,14 @@ def test_reindex_service_all_delete_failures_does_not_bump_and_returns_errors(mo
             self.bump_count += 1
             return 2
 
+    class _Reader:
+        async def fetch_source_rows(self, worklog_ids: list[int]):
+            return {}
+
     async def run_case() -> None:
         adapter = _Adapter()
         cache = _FakeCache()
+        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
         monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
 
         service = LightWorklogIndexService(cache=cache)  # type: ignore
@@ -616,7 +661,7 @@ def test_reindex_service_all_delete_failures_does_not_bump_and_returns_errors(mo
         assert [item.model_dump(by_alias=True) for item in response.items] == [
             {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_DELETE_FAILED"}
         ]
-        assert cache.bump_count == 0
+        assert cache.bump_count == 1
 
     asyncio.run(run_case())
 
