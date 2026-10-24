@@ -45,6 +45,21 @@ class LightWorklogSourceRow:
 class LightWorklogSourceStore:
     """LightRAG v4 업무일지 통합 source 조회 SQL을 소유한다."""
 
+    async def fetch_source_ids(
+        self, session: AsyncSession, *, after_id: int, limit: int,
+    ) -> list[int]:
+        """재구축 대상 생존 업무일지 ID를 keyset 방식으로 조회한다."""
+        result = await session.scalars(
+            select(Worklog.worklog_id)
+            .join(Team, Team.team_id == Worklog.team_id)
+            .join(User, User.user_id == Worklog.author_id)
+            .where(Worklog.worklog_id > after_id)
+            .where(Worklog.is_deleted.is_(False))
+            .where(Team.deleted_at.is_(None))
+            .order_by(Worklog.worklog_id).limit(limit)
+        )
+        return list(result.all())
+
     async def fetch_worklog_sources(
         self,
         session: AsyncSession,
