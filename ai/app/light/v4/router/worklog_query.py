@@ -24,21 +24,12 @@ from app.light.v4.service.taskgroup_search import (
     apply_taskgroup_search_patch,
     remove_taskgroup_search_patch,
 )
-from app.light.v4.service.worklog_query_cache import WorklogQueryCache
 from app.light.v4.service.worklog_query_service import LightWorklogQueryService
 
 router = APIRouter(prefix="/light/worklogs-v4", tags=["light-worklogs-v4"])
 
 
-def _create_default_service() -> LightWorklogQueryService:
-    try:
-        cache = WorklogQueryCache(settings_obj=settings)
-    except Exception:
-        cache = None
-    return LightWorklogQueryService(settings_obj=settings, cache=cache)
-
-
-worklog_query_service = _create_default_service()
+worklog_query_service = LightWorklogQueryService(settings_obj=settings)
 
 
 def get_worklog_query_service() -> LightWorklogQueryService:
