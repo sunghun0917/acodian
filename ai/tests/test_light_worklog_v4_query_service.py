@@ -246,7 +246,6 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
     adapter = ScopedAdapter()
     retrieved_teams = []
     db_calls = []
-    cache_calls = []
 
     class TeamPool:
         async def query_data(self, options, teams):
@@ -261,11 +260,6 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
             db_calls.append(ids)  # indexed-source lookup, not PostgreSQL
             return await fake_indexed_rows(ids)
 
-    class NoCache:
-        async def get_version(self):
-            cache_calls.append("version")
-            raise AssertionError("prefilter must not reuse legacy response cache")
-
     from app.light.v4.service import worklog_source_row_reader as db_module
     def unexpected_db(*args, **kwargs):
         raise AssertionError("Query must not enter PostgreSQL")
@@ -275,7 +269,7 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
     settings = Settings(_env_file=None)
     service = LightWorklogQueryService(
         settings_obj=settings, adapter_factory=lambda: adapter,
-        team_adapter_factory=TeamPool, cache=NoCache(),
+        team_adapter_factory=TeamPool,
     )
     request = make_request([101])
 
@@ -287,7 +281,6 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
     asyncio.run(run())
     assert retrieved_teams == [(101,)]
     assert db_calls == [[1, 2]]
-    assert cache_calls == []
     assert adapter.retrieval_calls == 0
     assert "SECRET" not in adapter.prompts[0]
     assert "Allowed work" in adapter.prompts[0]

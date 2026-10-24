@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 import json
 import re
 from typing import Any
@@ -24,9 +24,6 @@ from app.light.v4.prompt.worklog_query_prompt import build_worklog_query_system_
 from app.light.v4.service.worklog_team_scope import get_lightrag_team_scope_adapter
 
 
-from app.light.v4.service.worklog_query_cache import WorklogQueryCache
-
-
 _WORKLOG_PATH = re.compile(r"worklog://([1-9][0-9]*)")
 _WORKLOG_ENTITY = re.compile(r"^Worklog:([1-9][0-9]*)$")
 _MAX_SCOPED_PREDECESSOR_IDS = 100
@@ -42,113 +39,34 @@ class LightWorklogQueryService:
         settings_obj: Settings = settings,
         adapter_factory: Callable[..., Any] = get_lightrag_worklog_index_adapter,
         team_adapter_factory: Callable[..., Any] = get_lightrag_team_scope_adapter,
-        cache: WorklogQueryCache | None = None,
-        embedder: Callable[[str], Awaitable[list[float]]] | None = None,
+        cache: Any = None,
+        embedder: Any = None,
     ) -> None:
-        """settings와 LightRAG 검색/인덱스 원본 adapter, 캐시를 구성한다."""
+        """settings와 검색 adapter를 구성하며 응답 캐시는 사용하지 않는다."""
         self._settings = settings_obj
         self._adapter_factory = adapter_factory
         self._team_adapter_factory = team_adapter_factory
-        self._cache = cache
-        self._embedder = embedder
-
-    async def _get_embedding(self, text: str) -> list[float] | None:
-        """질의 임베딩을 구한다."""
-        if self._embedder is not None:
-            return await self._embedder(text)
-        try:
-            from app.client.gemini_client import get_gemini_client
-            results = await get_gemini_client().embed([text])
-            return results[0] if results else None
-        except Exception:
-            return None
+        # shortcut: 응답 캐시는 DB 최신성 검증을 지원할 때까지 모든 검색에서 비활성화한다.
 
     async def query_worklogs(
         self,
         request: WorklogLightQueryRequest,
     ) -> WorklogLightQueryResponse:
-        """LightRAG query를 실행하고 native answer와 references를 정규화한다."""
+        """검색 범위와 최신 DB 문맥 검증을 마친 뒤에만 답변을 생성한다."""
         if request.allowed_team_ids == []:
             return WorklogLightQueryResponse(answer="", references=[], internalOnly=True)
 
-        scope = WorklogQueryCache.scope_key(request.allowed_team_ids)
-        signature = WorklogQueryCache.signature(
-            request.query,
-            top_k=self._settings.lightrag_query_top_k,
-            chunk_top_k=self._settings.lightrag_query_chunk_top_k,
-            response_type=self._settings.lightrag_query_response_type,
-            enable_rerank=(
-                request.enable_rerank
-                if request.enable_rerank is not None
-                else self._settings.lightrag_rerank_enabled
-            ),
-            rerank_model=request.rerank_model,
-            llm_model=self._settings.gemini_model,
-            embedding_model=self._settings.embedding_model,
-        )
-
-        version = None
-        # shortcut: 팀별 응답 캐시는 최신성 게이트가 구현되면 복구한다.
-        if self._cache is not None and request.allowed_team_ids is None:
-            try:
-                version = await self._cache.get_version()
-            except Exception:
-                pass
-
-        # 1. Exact Cache Check
-        if version is not None:
-            try:
-                exact_hit = await self._cache.get_exact(scope, signature, version)
-                if exact_hit is not None:
-                    return exact_hit
-            except Exception:
-                pass
-
-        # 2. Semantic Cache Check
-        embedding = None
-        if version is not None:
-            try:
-                embedding = await self._get_embedding(request.query)
-                if embedding is not None:
-                    semantic_hit = await self._cache.get_semantic(scope, embedding, version)
-                    if semantic_hit is not None:
-                        return semantic_hit
-            except Exception:
-                pass
-
         options = self._build_options(request)
-        adapter = self._adapter_factory()
-        if request.allowed_team_ids is not None:
-            scoped = await self._indexed_context(request, options)
-            if scoped is None:
-                return WorklogLightQueryResponse(answer="", references=[], internalOnly=True)
-            prompt, references = scoped
-            answer = await adapter.complete_scoped(request.query, system_prompt=prompt)
-            if not isinstance(answer, str) or not answer.strip():
-                raise LightRagQueryFailedError("LightRAG query returned empty LLM response")
-            response = WorklogLightQueryResponse(
-                answer=answer.strip(), references=references, internalOnly=True,
-            )
-        else:
-            result = await adapter.query_worklogs(options)
-            raw = result.raw
-            response = WorklogLightQueryResponse(
-                answer=_extract_answer(raw),
-                references=_extract_references(raw),
-                internalOnly=True,
-            )
-
-        # 3. Put into Cache
-        if version is not None:
-            try:
-                if embedding is None:
-                    embedding = await self._get_embedding(request.query)
-                if embedding is not None:
-                    await self._cache.put(scope, signature, embedding, version, response)
-            except Exception:
-                pass
-
-        return response
+        scoped = await self._indexed_context(request, options)
+        if scoped is None:
+            return WorklogLightQueryResponse(answer="", references=[], internalOnly=True)
+        prompt, references = scoped
+        answer = await self._adapter_factory().complete_scoped(request.query, system_prompt=prompt)
+        if not isinstance(answer, str) or not answer.strip():
+            raise LightRagQueryFailedError("LightRAG query returned empty LLM response")
+        return WorklogLightQueryResponse(
+            answer=answer.strip(), references=references, internalOnly=True,
+        )
 
     def _build_options(
         self, request: WorklogLightQueryRequest, *, stream: bool = False
@@ -174,11 +92,12 @@ class LightWorklogQueryService:
     async def _indexed_context(
         self, request: WorklogLightQueryRequest, options: LightRagQueryOptions
     ) -> tuple[str, list[WorklogLightReferenceItem]] | None:
-        """허용 팀 후보와 현재 업무 원본으로 LLM 문맥을 구성한다."""
+        """전사 또는 허용 팀 후보를 현재 업무 원본과 검증해 LLM 문맥을 구성한다."""
         pool = self._team_adapter_factory()
-        retrieved = await pool.query_data(
-            options, tuple(request.allowed_team_ids or ()),
-        )
+        if request.allowed_team_ids is None:
+            retrieved = await self._adapter_factory().query_data(options)
+        else:
+            retrieved = await pool.query_data(options, tuple(request.allowed_team_ids))
         return await self._indexed_context_from_data(request, options, retrieved, pool)
 
     async def _indexed_context_from_data(
@@ -189,19 +108,22 @@ class LightWorklogQueryService:
         if not isinstance(retrieved, dict):
             raise LightRagQueryFailedError("LightRAG query returned invalid retrieval data")
         if retrieved.get("status") == "failure":
-            return None
+            metadata = retrieved.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("failure_reason") == "no_results":
+                return None
+            raise LightRagQueryFailedError("LightRAG retrieval failed")
         data = retrieved.get("data")
         if not isinstance(data, dict):
             raise LightRagQueryFailedError("LightRAG query returned invalid retrieval data")
         candidate_ids = _candidate_worklog_ids(data)
         if not candidate_ids:
             return None
-        scope = tuple(request.allowed_team_ids or ())
+        scope = None if request.allowed_team_ids is None else tuple(request.allowed_team_ids)
         rows = await pool.read_source_rows(candidate_ids, scope)
         allowed = set(request.allowed_team_ids or [])
         selected = [
             rows[worklog_id] for worklog_id in candidate_ids
-            if worklog_id in rows and rows[worklog_id].team_id in allowed
+            if worklog_id in rows and (scope is None or rows[worklog_id].team_id in allowed)
         ]
         if not selected:
             return None
@@ -221,7 +143,7 @@ class LightWorklogQueryService:
                 (worklog_id, predecessor_rows[worklog_id])
                 for worklog_id in predecessor_ids
                 if worklog_id in predecessor_rows
-                and predecessor_rows[worklog_id].team_id in allowed
+                and (scope is None or predecessor_rows[worklog_id].team_id in allowed)
             )
 
         body_context = "\n\n".join(
@@ -286,20 +208,20 @@ class LightWorklogQueryService:
         timeout_seconds = float(self._settings.lightrag_query_timeout_seconds)
         deadline = start_time + timeout_seconds
 
-        adapter = self._adapter_factory()
-        if request.allowed_team_ids is not None:
-            authorized = await self._indexed_context(request, options)
-            if authorized is None:
-                yield {"event": "done", "data": json.dumps({"references": [], "done": True})}
-                return
-            prompt, reference_items = authorized
-            response_iterator = await adapter.complete_scoped(
-                request.query, system_prompt=prompt, stream=True,
-            )
-            references = [item.model_dump(by_alias=True) for item in reference_items]
-        else:
-            response_iterator, raw = await adapter.query_worklogs_stream(options)
-            references = [item.model_dump(by_alias=True) for item in _extract_references(raw)]
+        try:
+            async with asyncio.timeout_at(deadline):
+                authorized = await self._indexed_context(request, options)
+                if authorized is not None:
+                    prompt, reference_items = authorized
+                    response_iterator = await self._adapter_factory().complete_scoped(
+                        request.query, system_prompt=prompt, stream=True,
+                    )
+        except TimeoutError as exc:
+            raise LightRagQueryTimeoutError("LightRAG stream context or generation timed out") from exc
+        if authorized is None:
+            yield {"event": "done", "data": json.dumps({"references": [], "done": True})}
+            return
+        references = [item.model_dump(by_alias=True) for item in reference_items]
 
         if response_iterator is None or not hasattr(response_iterator, "__anext__"):
             raise LightRagQueryFailedError(
@@ -324,25 +246,6 @@ class LightWorklogQueryService:
             raise LightRagQueryTimeoutError("LightRAG stream timed out") from exc
 
         yield {"event": "done", "data": json.dumps({"references": references, "done": True})}
-
-
-def _extract_answer(raw: Any) -> str:
-    """LightRAG raw payload에서 non-empty LLM answer를 안전하게 추출한다."""
-    if not isinstance(raw, dict):
-        raise LightRagQueryFailedError("LightRAG query returned invalid raw response")
-
-    llm_response = raw.get("llm_response")
-    if not isinstance(llm_response, dict):
-        raise LightRagQueryFailedError("LightRAG query returned invalid LLM response")
-
-    content = llm_response.get("content")
-    if not isinstance(content, str):
-        raise LightRagQueryFailedError("LightRAG query returned empty LLM response")
-
-    answer = content.strip()
-    if not answer:
-        raise LightRagQueryFailedError("LightRAG query returned empty LLM response")
-    return answer
 
 
 def _candidate_worklog_ids(data: dict[str, Any]) -> list[int]:
@@ -371,31 +274,3 @@ def _candidate_worklog_ids(data: dict[str, Any]) -> list[int]:
                 if match:
                     found[int(match.group(1))] = None
     return list(found)
-
-
-def _extract_references(raw: Any) -> list[WorklogLightReferenceItem]:
-    """LightRAG raw payload의 data.references를 업무일지 reference로 변환한다."""
-    if not isinstance(raw, dict):
-        return []
-
-    data = raw.get("data")
-    if not isinstance(data, dict):
-        return []
-
-    references = data.get("references")
-    if not isinstance(references, list):
-        return []
-
-    return [
-        _build_reference_item(reference)
-        for reference in references
-        if isinstance(reference, dict)
-    ]
-
-
-def _build_reference_item(raw_reference: dict[str, Any]) -> WorklogLightReferenceItem:
-    """Raw reference 1건을 응답 item으로 변환한다."""
-    return WorklogLightReferenceItem(
-        referenceId=str(raw_reference.get("reference_id", "")),
-        filePath=str(raw_reference.get("file_path", "")),
-    )
