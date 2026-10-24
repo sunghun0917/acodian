@@ -1,3 +1,6 @@
+import asyncio
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +42,9 @@ ERROR_LIGHTRAG_INSERT_TIMEOUT = "LIGHTRAG_INSERT_TIMEOUT"
 ERROR_LIGHTRAG_INSERT_FAILED = "LIGHTRAG_INSERT_FAILED"
 ERROR_LIGHTRAG_DELETE_TIMEOUT = "LIGHTRAG_DELETE_TIMEOUT"
 ERROR_LIGHTRAG_DELETE_FAILED = "LIGHTRAG_DELETE_FAILED"
+ERROR_LIGHTRAG_COMPENSATION_FAILED = "LIGHTRAG_COMPENSATION_FAILED"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,13 +67,21 @@ class LightWorklogIndexService:
 
     def __init__(
         self, *, cache: WorklogQueryCache | None = None, settings_obj: Settings = settings,
+        adapter_factory: Callable[[], Any] | None = None,
+        team_adapter_factory: Callable[[], Any] | None = None,
+        source_reader: WorklogLightSourceRowReader | None = None,
     ) -> None:
         """인덱싱/재색인/삭제 후 캐시 무효화에 사용할 Redis 캐시를 구성한다."""
-        self._cache = cache or WorklogQueryCache(settings_obj=settings_obj)
+        self._cache = cache
+        self._settings = settings_obj
+        self._adapter_factory = adapter_factory
+        self._team_adapter_factory = team_adapter_factory
+        self._source_reader = source_reader
 
     async def prepare_documents(self, worklog_ids: list[int]) -> PreparedLightWorklogDocuments:
         """업무일지 ID 목록을 LightRAG text/custom KG 문서와 missing ID 목록으로 나눈다."""
-        source_rows_by_id = await WorklogLightSourceRowReader().fetch_source_rows(worklog_ids)
+        reader = self._source_reader or WorklogLightSourceRowReader()
+        source_rows_by_id = await reader.fetch_source_rows(worklog_ids)
         documents: list[LightRagWorklogDocument] = []
         custom_kg_documents: list[LightRagWorklogCustomKgDocument] = []
         found_worklog_ids: list[int] = []
@@ -104,21 +118,24 @@ class LightWorklogIndexService:
         worklog_ids: list[int],
         *,
         already_mutated: bool = False,
+        prepared: PreparedLightWorklogDocuments | None = None,
     ) -> WorklogLightIndexResponse:
         """요청된 업무일지 ID 순서대로 text/custom KG 통합 index 결과를 반환한다."""
         if not worklog_ids:
-            if already_mutated:
+            if already_mutated and self._cache is not None:
                 await self._cache.bump_version()
             return WorklogLightIndexResponse(items=[])
 
-        prepared = await self.prepare_documents(worklog_ids)
-        failed_found_ids, mutation_attempted = await self._index_found_documents(prepared)
+        prepared = prepared or await self.prepare_documents(worklog_ids)
+        try:
+            failed_found_ids = await self._index_found_documents(prepared)
+        finally:
+            # 요청 취소/설정 오류도 부분 쓰기를 남길 수 있어 반환 경로와 무관하게 무효화한다.
+            if self._cache is not None and (prepared.documents or already_mutated):
+                await self._cache.bump_version()
 
         missing_worklog_ids = set(prepared.missing_worklog_ids)
         indexed_worklog_ids = set(prepared.found_worklog_ids) - set(failed_found_ids)
-        if indexed_worklog_ids or mutation_attempted or already_mutated:
-            await self._cache.bump_version()
-
         return WorklogLightIndexResponse(
             items=[
                 self._build_response_item(
@@ -134,22 +151,22 @@ class LightWorklogIndexService:
     async def reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
         """삭제와 최신 원본 조회/색인을 하나의 업무일지 mutation으로 묶는다."""
         async with worklog_mutation_locks([f"worklog:{item}" for item in worklog_ids]):
-            return await self._reindex_worklogs(worklog_ids)
+            try:
+                return await self._reindex_worklogs(worklog_ids)
+            except (Exception, asyncio.CancelledError):
+                if worklog_ids and self._cache is not None:
+                    await self._cache.bump_version()
+                raise
 
     async def _reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
-        """기존 인덱스를 단일 문서 단위로 삭제 후 최신 DB 내용으로 재색인한다.
-
-        삭제 실패한 문서는 재색인을 진행하지 않고 즉시 실패 처리하며,
-        일부라도 삭제되거나 텍스트가 삽입된 경우 캐시 버전을 증가시킨다.
-        """
-        adapter = get_lightrag_worklog_index_adapter()
+        """생존 원본의 팀으로 부분 색인을 복구하고 삭제된 원본은 기록된 소유권으로 정리한다."""
+        prepared = await self.prepare_documents(worklog_ids)
+        adapter = (self._adapter_factory or get_lightrag_worklog_index_adapter)()
         delete_failed_items: dict[int, str] = {}
-        deleted_worklog_ids: list[int] = []
 
-        for worklog_id in worklog_ids:
+        for worklog_id in prepared.missing_worklog_ids:
             try:
                 await self._delete_document(adapter, f"worklog-{worklog_id}")
-                deleted_worklog_ids.append(worklog_id)
             except LightRagConfigurationError:
                 raise
             except LightRagDeleteTimeoutError:
@@ -157,45 +174,35 @@ class LightWorklogIndexService:
             except LightRagDeleteFailedError:
                 delete_failed_items[worklog_id] = ERROR_LIGHTRAG_DELETE_FAILED
 
-        has_deleted = bool(deleted_worklog_ids)
-
         indexed_response = await self._index_worklogs(
-            deleted_worklog_ids,
-            already_mutated=has_deleted,
+            worklog_ids, prepared=prepared,
+            already_mutated=bool(prepared.missing_worklog_ids),
         )
-        indexed_item_by_id = {item.worklog_id: item for item in indexed_response.items}
-
-        items: list[WorklogLightIndexItem] = []
-        for worklog_id in worklog_ids:
-            if worklog_id in delete_failed_items:
-                items.append(
-                    WorklogLightIndexItem(
-                        worklogId=worklog_id,
-                        indexed=False,
-                        error=delete_failed_items[worklog_id],
-                    )
-                )
-            elif worklog_id in indexed_item_by_id:
-                items.append(indexed_item_by_id[worklog_id])
-
-        return WorklogLightIndexResponse(items=items)
+        return WorklogLightIndexResponse(items=[
+            WorklogLightIndexItem(worklogId=item.worklog_id, indexed=False,
+                                 error=delete_failed_items[item.worklog_id])
+            if item.worklog_id in delete_failed_items else item
+            for item in indexed_response.items
+        ])
 
     async def delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteResponse:
         """동일 업무일지의 원본 조회/색인과 삭제를 직렬화한다."""
         async with worklog_mutation_locks([f"worklog:{item}" for item in worklog_ids]):
-            return await self._delete_worklogs(worklog_ids)
+            try:
+                return await self._delete_worklogs(worklog_ids)
+            finally:
+                if worklog_ids and self._cache is not None:
+                    await self._cache.bump_version()
 
     async def _delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteResponse:
         """요청된 업무일지 문서를 LightRAG에서 삭제하고 캐시 버전을 증가시킨다."""
-        adapter = get_lightrag_worklog_index_adapter()
+        adapter = (self._adapter_factory or get_lightrag_worklog_index_adapter)()
         items: list[WorklogLightDeleteItem] = []
-        any_success = False
 
         for worklog_id in worklog_ids:
             try:
                 await self._delete_document(adapter, f"worklog-{worklog_id}")
                 items.append(WorklogLightDeleteItem(worklogId=worklog_id, deleted=True))
-                any_success = True
             except LightRagConfigurationError:
                 raise
             except LightRagDeleteTimeoutError:
@@ -211,65 +218,133 @@ class LightWorklogIndexService:
                     )
                 )
 
-        if any_success:
-            await self._cache.bump_version()
-
         return WorklogLightDeleteResponse(items=items)
 
     async def _delete_document(self, adapter: Any, document_id: str) -> None:
         """팀 사본을 먼저 삭제하고 마지막에 전역 원본/소유권 레코드를 지운다."""
+        if hasattr(adapter, "set_document_indexing_status"):
+            try:
+                await adapter.set_document_indexing_status(document_id, "STAGING")
+            except LightRagInsertTimeoutError as exc:
+                raise LightRagDeleteTimeoutError("LightRAG deletion gate close timed out") from exc
+            except LightRagInsertFailedError as exc:
+                raise LightRagDeleteFailedError("LightRAG deletion gate close failed") from exc
         team_id = await adapter.get_document_team_id(document_id)
         if team_id is not None:
-            scoped = get_lightrag_team_scope_adapter().adapter_for(team_id)
+            pool = (self._team_adapter_factory or get_lightrag_team_scope_adapter)()
+            scoped = pool.adapter_for(team_id)
             await scoped.delete_document(document_id)
         await adapter.delete_document(document_id)
 
     async def _index_found_documents(
         self,
         prepared: PreparedLightWorklogDocuments,
-    ) -> tuple[dict[int, str], bool]:
-        """조회된 업무일지만 adapter에 전달하고 text/custom KG 실패를 ID별 오류로 변환한다.
-
-        반환값: (failed_found_ids, mutation_attempted)
-        native insert는 실패/timeout 응답 전 부분 쓰기가 가능하므로 시도만으로 캐시를 무효화한다.
-        """
+    ) -> dict[int, str]:
+        """문서별 잔존물을 지우고 모든 workspace 성공 후 전역 완료를 게시한다."""
         if not prepared.documents:
-            return {}, False
+            return {}
 
-        adapter = get_lightrag_worklog_index_adapter()
-        try:
-            await adapter.index_documents(prepared.documents)
-        except LightRagConfigurationError:
-            raise
-        except LightRagInsertTimeoutError:
-            return {
-                worklog_id: ERROR_LIGHTRAG_INSERT_TIMEOUT
-                for worklog_id in prepared.found_worklog_ids
-            }, True
-        except LightRagInsertFailedError:
-            return {
-                worklog_id: ERROR_LIGHTRAG_INSERT_FAILED
-                for worklog_id in prepared.found_worklog_ids
-            }, True
+        adapter = (self._adapter_factory or get_lightrag_worklog_index_adapter)()
+        pool = (self._team_adapter_factory or get_lightrag_team_scope_adapter)()
+        failures: dict[int, str] = {}
+        for document, kg_document, row in zip(
+            prepared.documents, prepared.custom_kg_documents, prepared.source_rows, strict=True,
+        ):
+            document_id = document.document_id
+            compensations: list[tuple[str, Any]] = []
+            completion_attempted = False
+            try:
+                previous_team = await adapter.get_document_team_id(document_id, allow_missing=True)
+                try:
+                    await adapter.set_document_indexing_status(document_id, "STAGING")
+                except LightRagInsertTimeoutError as exc:
+                    raise LightRagDeleteTimeoutError("LightRAG deletion gate close timed out") from exc
+                except LightRagInsertFailedError as exc:
+                    raise LightRagDeleteFailedError("LightRAG deletion gate close failed") from exc
+                # native filter_keys가 부분 문서를 건너뛰지 않도록 재시도도 처음부터 시작한다.
+                for team_id in dict.fromkeys([previous_team, row.team_id]):
+                    if team_id is not None:
+                        await pool.adapter_for(team_id).delete_document(document_id)
+                await adapter.delete_document(document_id)
+                # 본문/KG 공유 문서 삭제를 workspace당 첫 쓰기 전에 한 번 등록한다.
+                compensations.append(("global", adapter))
+                await adapter.index_documents([document])
+                await adapter.index_custom_kg_documents([kg_document])
+                await adapter.save_indexed_team_ids({row.worklog_id: row.team_id})
+                compensations.append((f"team:{row.team_id}", pool.adapter_for(row.team_id)))
+                await pool.index_source_rows([row])
+                completion_attempted = True
+                await adapter.set_document_indexing_status(document_id, "COMPLETED")
+            except (Exception, asyncio.CancelledError) as exc:
+                recovered = await self._await_compensation(
+                    adapter, document_id, compensations, completion_attempted=completion_attempted,
+                )
+                if isinstance(exc, (LightRagConfigurationError, asyncio.CancelledError)):
+                    raise
+                if not recovered:
+                    failures[row.worklog_id] = ERROR_LIGHTRAG_COMPENSATION_FAILED
+                elif isinstance(exc, LightRagInsertTimeoutError):
+                    failures[row.worklog_id] = ERROR_LIGHTRAG_INSERT_TIMEOUT
+                elif isinstance(exc, LightRagDeleteTimeoutError):
+                    failures[row.worklog_id] = ERROR_LIGHTRAG_DELETE_TIMEOUT
+                elif isinstance(exc, LightRagDeleteFailedError):
+                    failures[row.worklog_id] = ERROR_LIGHTRAG_DELETE_FAILED
+                else:
+                    logger.exception("LightRAG document indexing failed: %s", document_id)
+                    failures[row.worklog_id] = ERROR_LIGHTRAG_INSERT_FAILED
+        return failures
 
+    async def _await_compensation(
+        self, adapter: Any, document_id: str, compensations: list[tuple[str, Any]],
+        *, completion_attempted: bool,
+    ) -> bool:
+        """취소와 분리한 보상 작업의 종료까지 잠금을 유지하되 시간 제한을 둔다."""
+        task = asyncio.create_task(asyncio.wait_for(
+            self._compensate_document(
+                adapter, document_id, compensations, completion_attempted=completion_attempted,
+            ),
+            timeout=self._settings.lightrag_insert_timeout_seconds,
+        ))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+            except TimeoutError:
+                break
         try:
-            await adapter.index_custom_kg_documents(prepared.custom_kg_documents)
-            # 부분 실패 후에도 색인 당시 팀을 찾아 재시도/삭제할 수 있게 먼저 저장한다.
-            await adapter.save_indexed_team_ids({row.worklog_id: row.team_id for row in prepared.source_rows})
-            await get_lightrag_team_scope_adapter().index_source_rows(prepared.source_rows)
-        except LightRagConfigurationError:
-            raise
-        except LightRagInsertTimeoutError:
-            return {
-                worklog_id: ERROR_LIGHTRAG_INSERT_TIMEOUT
-                for worklog_id in prepared.found_worklog_ids
-            }, True
-        except LightRagInsertFailedError:
-            return {
-                worklog_id: ERROR_LIGHTRAG_INSERT_FAILED
-                for worklog_id in prepared.found_worklog_ids
-            }, True
-        return {}, True
+            recovered = task.result()
+        except TimeoutError:
+            logger.error("LightRAG document compensation timed out: document=%s workspaces=%s",
+                         document_id, [name for name, _ in compensations])
+            recovered = False
+        if cancelled:
+            raise asyncio.CancelledError
+        return recovered
+
+    async def _compensate_document(
+        self, adapter: Any, document_id: str, compensations: list[tuple[str, Any]],
+        *, completion_attempted: bool,
+    ) -> bool:
+        """확보한 workspace·문서 ID로 팀→전역 정리하며 실패 시 소유권을 보존한다."""
+        if completion_attempted:
+            try:
+                await adapter.set_document_indexing_status(document_id, "STAGING")
+            except Exception:
+                # 완료 응답만 유실됐을 수 있어 게이트를 닫기 전에는 삭제하지 않는다.
+                logger.exception("LightRAG compensation gate close failed: document=%s workspace=global",
+                                 document_id)
+                return False
+        for workspace_name, workspace in reversed(compensations):
+            try:
+                await workspace.delete_document(document_id)
+            except Exception:
+                # 팀 삭제 실패 시 전역 소유권을 지우면 다음 재시도에서 과거 팀을 잃는다.
+                logger.exception("LightRAG document compensation failed: document=%s workspace=%s",
+                                 document_id, workspace_name)
+                return False
+        return True
 
     def _build_response_item(
         self,

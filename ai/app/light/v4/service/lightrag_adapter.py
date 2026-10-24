@@ -102,7 +102,7 @@ class WorklogLightIndexAdapter(Protocol):
     async def save_indexed_team_ids(self, teams_by_worklog_id: dict[int, int]) -> None:
         """Record team ownership before scoped writes."""
 
-    async def get_document_team_id(self, document_id: str) -> int | None:
+    async def get_document_team_id(self, document_id: str, *, allow_missing: bool = False) -> int | None:
         """Read the last indexed team for deletion."""
 
 
@@ -234,20 +234,96 @@ class LightRagWorklogIndexAdapter:
 
         try:
             rag = await self._get_initialized_rag()
-            async with worklog_mutation_locks([workspace_mutation_key(rag)]):
+            async with asyncio.timeout(self._settings.lightrag_insert_timeout_seconds), worklog_mutation_locks([workspace_mutation_key(rag)]):
+                pending = getattr(rag.doc_status, "_worklog_pending_chunks", {}).get(document_id, [])
+                if pending:
+                    record = await rag.doc_status.get_by_id(document_id)
+                    status_missing = record is None
+                    if status_missing:
+                        record = getattr(rag.doc_status, "_worklog_pending_status", {}).get(document_id)
+                    if not isinstance(record, dict):
+                        raise LightRagDeleteFailedError("Document chunk tracking is incomplete; recovery required")
+                    if status_missing or not set(pending).issubset(record.get("chunks_list", [])):
+                        chunks = list(dict.fromkeys([*record.get("chunks_list", []), *pending]))
+                        await rag.doc_status.upsert({document_id: {
+                            **record, "chunks_list": chunks, "chunks_count": len(chunks),
+                            "metadata": {**record.get("metadata", {}), "indexing_status": "STAGING"},
+                        }})
+                        await rag.doc_status.index_done_callback()
+                        saved = await rag.doc_status.get_by_id(document_id)
+                        if (not isinstance(saved, dict)
+                                or not set(pending).issubset(saved.get("chunks_list", []))
+                                or saved.get("metadata", {}).get("indexing_status") != "STAGING"):
+                            raise LightRagDeleteFailedError("Document chunk tracking recovery could not be verified")
                 result = await asyncio.wait_for(
                     rag.adelete_by_doc_id(document_id),
                     timeout=self._settings.lightrag_insert_timeout_seconds,
                 )
+                result_status = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
+                if result_status == "not_found":
+                    await asyncio.wait_for(
+                        self._delete_statusless_document(rag, document_id),
+                        timeout=self._settings.lightrag_insert_timeout_seconds,
+                    )
             status = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
             if status not in {"success", "not_found"}:
                 raise LightRagDeleteFailedError(f"LightRAG returned deletion status: {status}")
+            getattr(rag.doc_status, "_worklog_pending_chunks", {}).pop(document_id, None)
+            getattr(rag.doc_status, "_worklog_pending_status", {}).pop(document_id, None)
         except LightRagConfigurationError:
             raise
         except TimeoutError as exc:
             raise LightRagDeleteTimeoutError("LightRAG document delete timed out") from exc
         except Exception as exc:
             raise LightRagDeleteFailedError(f"LightRAG document delete failed: {exc}") from exc
+
+    async def _delete_statusless_document(self, rag: Any, document_id: str) -> None:
+        """native not_found가 놓치는 full_docs-only 쓰기를 정리하고 추적 유실은 차단한다."""
+        for name in ("full_entities", "full_relations"):
+            if await getattr(rag, name).get_by_id(document_id):
+                raise LightRagDeleteFailedError("Statusless document retains graph tracking; manual recovery required")
+        if await rag.full_docs.get_by_id(document_id) is not None:
+            await rag.full_docs.delete([document_id])
+            await rag.full_docs.index_done_callback()
+        if await rag.full_docs.get_by_id(document_id) is not None:
+            raise LightRagDeleteFailedError("Statusless full document cleanup is incomplete")
+
+    async def set_document_indexing_status(self, document_id: str, state: str) -> None:
+        """native 상태를 보존하며 전역 완료 게이트를 영속화하고 읽어 확인한다."""
+        async def save() -> None:
+            if not document_id or state not in {"STAGING", "COMPLETED"}:
+                raise ValueError("Invalid document indexing state")
+            rag = await self._get_initialized_rag()
+            async with worklog_mutation_locks([workspace_mutation_key(rag)]):
+                record = await rag.doc_status.get_by_id(document_id)
+                if record is None and state == "STAGING":
+                    return
+                if not isinstance(record, dict):
+                    raise ValueError("Index publication requires an existing document")
+                metadata = record.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    raise ValueError("Invalid document metadata")
+                team_id = metadata.get("indexed_team_id")
+                if state == "COMPLETED" and (
+                    record.get("status") != "processed" or type(team_id) is not int or team_id <= 0
+                ):
+                    raise ValueError("Index publication requires processed document ownership")
+                await rag.doc_status.upsert({document_id: {
+                    **record, "metadata": {**metadata, "indexing_status": state},
+                }})
+                await rag.doc_status.index_done_callback()
+                saved = await rag.doc_status.get_by_id(document_id)
+                if not isinstance(saved, dict) or saved.get("metadata", {}).get("indexing_status") != state:
+                    raise ValueError("Index publication could not be verified")
+
+        try:
+            await asyncio.wait_for(save(), timeout=self._settings.lightrag_insert_timeout_seconds)
+        except LightRagConfigurationError:
+            raise
+        except TimeoutError as exc:
+            raise LightRagInsertTimeoutError("LightRAG indexing state save timed out") from exc
+        except Exception as exc:
+            raise LightRagInsertFailedError("LightRAG indexing state save failed") from exc
 
     async def save_indexed_team_ids(self, teams_by_worklog_id: dict[int, int]) -> None:
         """Preserve native status fields and record the indexed team before team writes."""
@@ -276,7 +352,7 @@ class LightRagWorklogIndexAdapter:
         except Exception as exc:
             raise LightRagInsertFailedError("LightRAG indexed ownership save failed") from exc
 
-    async def get_document_team_id(self, document_id: str) -> int | None:
+    async def get_document_team_id(self, document_id: str, *, allow_missing: bool = False) -> int | None:
         """Recover indexed ownership independently of the current source database."""
         try:
             rag = await self._get_initialized_rag()
@@ -284,6 +360,10 @@ class LightRagWorklogIndexAdapter:
             if record is None:
                 return None
             metadata = record.get("metadata") if isinstance(record, dict) else None
+            if allow_missing and isinstance(record, dict) and (
+                metadata is None or isinstance(metadata, dict) and "indexed_team_id" not in metadata
+            ):
+                return None
             team_id = metadata.get("indexed_team_id") if isinstance(metadata, dict) else None
             if type(team_id) is not int or team_id <= 0:
                 raise ValueError("Invalid indexed team ownership")
@@ -293,8 +373,10 @@ class LightRagWorklogIndexAdapter:
         except Exception as exc:
             raise LightRagDeleteFailedError("LightRAG indexed team lookup failed") from exc
 
-    async def get_processed_worklog_ids(self, worklog_ids: list[int]) -> set[int]:
-        """Return only processed IDs; malformed storage responses fail closed."""
+    async def get_processed_worklog_ids(
+        self, worklog_ids: list[int], *, require_completed: bool = True,
+    ) -> set[int]:
+        """완료된 전역 ID만 반환한다. 팀 native 상태는 공통 게이트와 별도로 확인한다."""
         if not worklog_ids:
             return set()
         try:
@@ -315,7 +397,12 @@ class LightRagWorklogIndexAdapter:
                     "pending", "processing", "preprocessed", "processed", "failed",
                 }:
                     raise ValueError("Invalid document status")
-                if record["status"] == "processed":
+                metadata = record.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    raise ValueError("Invalid document metadata")
+                if record["status"] == "processed" and (
+                    not require_completed or metadata.get("indexing_status") == "COMPLETED"
+                ):
                     result.add(worklog_id)
             return result
         except LightRagConfigurationError:
@@ -532,6 +619,7 @@ class LightRagWorklogIndexAdapter:
         self._verify_storage_workspaces(rag)
         for name in _PG_STORAGE_NAMES:
             _configure_pg_delete(getattr(rag, name))
+        _configure_worklog_status_tracking(rag.doc_status)
         # 새 전역 workspace도 기존 vector 데이터를 자동 이관하지 않는다.
         for name in ("entities_vdb", "relationships_vdb", "chunks_vdb"):
             storage = getattr(rag, name)
@@ -559,6 +647,11 @@ class LightRagWorklogIndexAdapter:
         if options.enable_rerank and not self._rerank_endpoint_configured():
             raise LightRagConfigurationError(
                 "Reranking is requested but LIGHTRAG_RERANK_BINDING_HOST is not configured"
+            )
+        if (options.enable_rerank and options.rerank_model
+                and options.rerank_model != self._settings.lightrag_rerank_model):
+            raise LightRagConfigurationError(
+                "TEI request model must match LIGHTRAG_RERANK_MODEL"
             )
         dependencies = self._dependencies or _load_lightrag_dependencies()
         async def answer_model_func(prompt: str, **kwargs: Any) -> Any:
@@ -916,6 +1009,40 @@ async def close_lightrag_worklog_index_adapter() -> None:
     if _lightrag_worklog_index_adapter is not None:
         await _lightrag_worklog_index_adapter.close()
     _lightrag_worklog_index_adapter = None
+
+
+def _configure_worklog_status_tracking(storage: Any) -> None:
+    """native FAILED upsert가 보상 삭제용 chunks_list를 비우는 것을 막는다."""
+    if getattr(storage, "_worklog_status_tracking", False):
+        return
+    original = storage.upsert
+    pending: dict[str, list[str]] = {}
+    storage._worklog_pending_chunks = pending
+    pending_status: dict[str, dict[str, Any]] = {}
+    storage._worklog_pending_status = pending_status
+
+    async def upsert(records: dict[str, dict[str, Any]]) -> None:
+        """동시 청크 쓰기 전에 받은 ID를 상태 쓰기 실패 후에도 보존한다."""
+        for key, record in records.items():
+            if "chunks_list" in record:
+                pending[key] = list(dict.fromkeys([*pending.get(key, []), *record["chunks_list"]]))
+        merged = {}
+        for key, record in records.items():
+            previous = await storage.get_by_id(key) or {}
+            chunks = list(dict.fromkeys([*previous.get("chunks_list", []), *pending.get(key, [])]))
+            metadata = {**previous.get("metadata", {}), **record.get("metadata", {})}
+            if record.get("status") != "processed":
+                metadata["indexing_status"] = "STAGING"
+            merged[key] = {**record, "metadata": metadata, "chunks_list": chunks, "chunks_count": len(chunks)}
+        pending_status.update(merged)
+        await original(merged)
+        for key, record in merged.items():
+            if record.get("status") == "processed":
+                pending.pop(key, None)
+                pending_status.pop(key, None)
+
+    storage.upsert = upsert
+    storage._worklog_status_tracking = True
 
 
 def _configure_pg_delete(storage: Any) -> None:

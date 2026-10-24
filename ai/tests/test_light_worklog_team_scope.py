@@ -19,6 +19,18 @@ from app.light.v4.store.worklog_source_store import (
 )
 
 
+@pytest.fixture(autouse=True)
+def completed_global_fixture(monkeypatch):
+    """원본 생존/팀 상태 테스트의 전역 완료 경계를 외부 DB 없이 제공한다."""
+    from app.light.v4.service import worklog_team_scope as module
+    class Global:
+        async def get_processed_worklog_ids(self, ids):
+            return set(ids)
+        async def get_document_team_id(self, doc_id):
+            return 20 if doc_id == "worklog-2" else 10
+    monkeypatch.setattr(module, "get_lightrag_worklog_index_adapter", Global)
+
+
 def source_row(team_id: int, worklog_id: int) -> LightWorklogSourceRow:
     """두 팀이 같은 사용자/태그를 공유하되 비밀 표식은 다른 fixture다."""
     return LightWorklogSourceRow(
@@ -48,7 +60,7 @@ class FakeTeamAdapter:
     async def index_custom_kg_documents(self, documents):
         self.kg_documents.extend(documents)
 
-    async def get_processed_worklog_ids(self, ids):
+    async def get_processed_worklog_ids(self, ids, *, require_completed=True):
         self.calls.append(("read", tuple(ids)))
         indexed = {int(doc.document_id.removeprefix("worklog-")) for doc in self.documents}
         return set(ids) & indexed
@@ -229,7 +241,7 @@ def test_source_lookup_uses_fresh_rows_and_matching_team_status():
                     2: source_row(20, 2)}
     scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
                                      adapter_factory=FakeTeamAdapter, source_reader=Reader())
-    async def processed(ids):
+    async def processed(ids, *, require_completed=True):
         return {1, 2}
     scoped.adapter_for(10).get_processed_worklog_ids = processed
     async def run():
@@ -242,11 +254,11 @@ def test_source_lookup_uses_fresh_rows_and_matching_team_status():
 def test_source_lookup_excludes_missing_and_unprocessed():
     class Reader:
         async def fetch_source_rows(self, ids):
-            assert ids == [1]
+            assert ids == [1, 2, 3]
             return {1: source_row(10, 1)}
     scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
                                      adapter_factory=FakeTeamAdapter, source_reader=Reader())
-    async def processed(ids):
+    async def processed(ids, *, require_completed=True):
         return {1}
     scoped.adapter_for(10).get_processed_worklog_ids = processed
     assert set(asyncio.run(scoped.read_source_rows([1, 2, 3], (10,)))) == {1}
@@ -258,7 +270,7 @@ def test_source_failure_does_not_fallback_to_graph():
             raise RuntimeError("source unavailable")
     scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
                                      adapter_factory=FakeTeamAdapter, source_reader=Reader())
-    async def processed(ids):
+    async def processed(ids, *, require_completed=True):
         return {1}
     scoped.adapter_for(10).get_processed_worklog_ids = processed
     with pytest.raises(LightRagQueryFailedError):
@@ -271,9 +283,9 @@ def test_moved_row_requires_processed_status_in_current_team():
             return {1: source_row(20, 1)}
     scoped = LightRagTeamScopeAdapter(settings_obj=Settings(_env_file=None),
                                      adapter_factory=FakeTeamAdapter, source_reader=Reader())
-    async def old(ids):
+    async def old(ids, *, require_completed=True):
         return {1}
-    async def new(ids):
+    async def new(ids, *, require_completed=True):
         return set()
     scoped.adapter_for(10).get_processed_worklog_ids = old
     scoped.adapter_for(20).get_processed_worklog_ids = new

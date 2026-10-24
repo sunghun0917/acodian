@@ -71,7 +71,7 @@ def test_ownership_requires_processed_document():
 def test_processed_lookup_excludes_missing_and_incomplete():
     adapter, status = adapter_with_status({})
     async def statuses(ids):
-        return [{"status": "processed"}, None, {"status": "processing"}, {"status": "failed"}]
+        return [{"status": "processed", "metadata": {"indexing_status": "COMPLETED"}}, None, {"status": "processing"}, {"status": "failed"}]
     status.get_by_ids = statuses
     assert asyncio.run(adapter.get_processed_worklog_ids([1, 2, 3, 4])) == {1}
 
