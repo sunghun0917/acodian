@@ -95,6 +95,20 @@ class WorklogAiPostProcessServiceTest {
         lenient().when(outboxRepository.lockWorklog(501L)).thenReturn(Optional.of(false));
         lenient().when(outboxRepository.lockClaim(any())).thenReturn(true);
         lenient().when(fileService.isActiveWorklogFile(501L, 9001L)).thenReturn(true);
+        lenient().when(outboxRepository.pendingLightRequest(any())).thenReturn(Optional.of(new UUID(0, 1)));
+        lenient().when(outboxRepository.lightState(any())).thenReturn("COMPLETED");
+    }
+
+    @Test
+    void accepted_index_releases_claim_without_completion_or_notification() {
+        when(outboxRepository.lightState(any())).thenReturn("PENDING");
+        Claim claim = claim(eventWithoutFiles());
+        service.finish(claim, service.process(claim));
+        verify(outboxRepository).awaitLightResult(claim);
+        verify(outboxRepository, never()).checkpoint(claim, "LIGHT_INDEX");
+        verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
+        verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
+                any(), any(), any(), any(), any(), eq(true), any());
     }
 
     @Test
@@ -225,12 +239,12 @@ class WorklogAiPostProcessServiceTest {
     void process_resumes_only_unfinished_stages() {
         Claim claim = new Claim(501L, eventWithFiles(), Set.of("FILE_SUMMARY(9001)", "WORKLOG_PIPELINE"), 1, UUID.randomUUID());
 
-        assertThat(service.process(claim)).isEmpty();
+        assertThat(service.process(claim).failedStages()).isEmpty();
 
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(worklogPipelineClient, never()).requestPipeline(any());
         verify(worklogLightIndexClient).requestIndex(any());
-        verify(outboxRepository).checkpoint(claim, "LIGHT_INDEX");
+        verify(outboxRepository).acceptLightRequest(claim, new UUID(0, 1));
         verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
     }
 
@@ -269,7 +283,7 @@ class WorklogAiPostProcessServiceTest {
     void removed_attachment_is_skipped_without_blocking_other_stages() {
         when(fileService.isActiveWorklogFile(501L, 9001L)).thenReturn(false);
 
-        assertThat(service.process(claim(eventWithFiles()))).isEmpty();
+        assertThat(service.process(claim(eventWithFiles())).failedStages()).isEmpty();
 
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(outboxRepository).checkpoint(any(), eq("FILE_SUMMARY(9001)"));
@@ -282,7 +296,7 @@ class WorklogAiPostProcessServiceTest {
     void finish_ignores_stale_claim() {
         when(outboxRepository.lockClaim(any())).thenReturn(false);
 
-        service.finish(claim(eventWithFiles()), List.of());
+        service.finish(claim(eventWithFiles()), new WorklogAiPostProcessService.ProcessResult(List.of(), null));
 
         verify(outboxRepository, never()).complete(any());
         verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());

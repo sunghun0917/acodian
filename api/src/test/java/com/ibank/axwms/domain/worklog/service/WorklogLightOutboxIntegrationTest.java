@@ -17,6 +17,7 @@ import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -65,23 +66,44 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
     }
 
     @Test
-    @DisplayName("스케줄러가 수정과 삭제 작업을 null ID로 선점하면 AI 전달 후 작업을 제거한다")
-    void poll_dispatches_reindex_and_delete_and_removes_successful_jobs() {
+    @DisplayName("lease 만료 후 재선점되면 이전 선점의 접수·실패 처리는 현재 선점을 변경하지 않는다")
+    void expired_claim_cannot_change_reclaimed_job() {
+        repository.enqueue(501L, "REINDEX");
+        var stale = repository.claim(501L, UUID.randomUUID()).getFirst();
+        jdbcTemplate.update("UPDATE tb_worklog_light_outbox SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE worklog_id = 501");
+        var current = repository.claim(501L, UUID.randomUUID()).getFirst();
+
+        repository.awaitResult(stale);
+        repository.fail(stale, "obsolete failure");
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT claim_token = ? AND attempts = 0 AND last_error IS NULL
+                    AND lease_until > CURRENT_TIMESTAMP AND next_attempt_at <= CURRENT_TIMESTAMP
+                FROM tb_worklog_light_outbox WHERE worklog_id = 501
+                """, Boolean.class, current.token())).isTrue();
+    }
+
+    @Test
+    @DisplayName("수정·삭제 요청은 AI 접수 후에도 보존하고 결과 대기 중 즉시 재전달하지 않는다")
+    void poll_retains_accepted_reindex_and_delete_until_result() {
         repository.enqueue(501L, "REINDEX");
         repository.enqueue(502L, "DELETE");
 
         worker.poll();
+        worker.poll();
 
-        verify(client).requestReindex(TriggerWorklogLightIndexDto.Request.of(501L));
-        verify(client).requestDelete(TriggerWorklogLightDeleteDto.Request.of(502L));
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox", Integer.class)).isZero();
+        verify(client).requestReindex(any());
+        verify(client).requestDelete(any());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox", Integer.class)).isEqualTo(2);
+        assertThat(repository.claim(null, UUID.randomUUID())).isEmpty();
     }
 
     @Test
-    @DisplayName("AI 전달이 실패하면 작업을 보존하고 재시도 기한이 된 후 성공한 작업을 제거한다")
+    @DisplayName("AI 전달 실패 후 재접수에 성공해도 완료 콜백 전까지 작업을 보존한다")
     void failed_dispatch_is_retained_until_poll_retry_succeeds() {
         repository.enqueue(501L, "REINDEX");
-        var request = TriggerWorklogLightIndexDto.Request.of(501L);
+        var request = TriggerWorklogLightIndexDto.Request.of(501L, jdbcTemplate.queryForObject(
+                "SELECT request_id FROM tb_worklog_light_outbox WHERE worklog_id = 501", UUID.class));
         doThrow(new IllegalStateException("AI unavailable")).when(client).requestReindex(request);
 
         assertThat(worker.processOne(null)).isTrue();
@@ -108,6 +130,6 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
 
         verify(client, times(2)).requestReindex(request);
         assertThat(repository.claim(null, UUID.randomUUID())).isEmpty();
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox", Integer.class)).isEqualTo(1);
     }
 }
