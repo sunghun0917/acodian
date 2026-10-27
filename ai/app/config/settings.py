@@ -1,11 +1,12 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 DEFAULT_LIGHTRAG_LLM_FALLBACK_MODELS: tuple[str, ...] = ()
+LIGHT_WORKER_DELIVERY_BUDGET_SECONDS = 120
 
 
 class Settings(BaseSettings):
@@ -89,6 +90,18 @@ class Settings(BaseSettings):
 
     # LightRAG 전용 DB. 업무 원본용 pgvector_dsn과 분리한다.
     lightrag_pg_dsn: str = Field(default="", repr=False)
+
+    celery_task_time_limit_seconds: int = Field(default=540, ge=1)
+    worklog_light_index_timeout_seconds: int = Field(default=300, gt=0)
+    worklog_light_index_result_dir: Path = Path("./data/worklog-index-results")
+
+    @model_validator(mode="after")
+    def validate_worker_time_budget(self) -> "Settings":
+        """강제 종료 전에 보상·결과 저장·HTTP 통보를 시도할 여유를 확보한다."""
+        cleanup_budget = self.lightrag_insert_timeout_seconds + LIGHT_WORKER_DELIVERY_BUDGET_SECONDS
+        if self.celery_task_time_limit_seconds < self.worklog_light_index_timeout_seconds + cleanup_budget:
+            raise ValueError("Celery hard deadline must allow index compensation and result delivery")
+        return self
 
     model_config = SettingsConfigDict(
         # ai/.env 를 자동 로드한다 (없으면 위 기본값을 사용).

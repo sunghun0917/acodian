@@ -6,10 +6,10 @@ from typing import Any
 
 from app.config.settings import Settings, settings
 from app.light.v4.model.worklog_index import (
-    WorklogLightDeleteItem,
-    WorklogLightDeleteResponse,
-    WorklogLightIndexItem,
-    WorklogLightIndexResponse,
+    WorklogLightDeleteExecutionItem,
+    WorklogLightDeleteExecutionResponse,
+    WorklogLightIndexExecutionItem,
+    WorklogLightIndexExecutionResponse,
 )
 from app.light.v4.service.lightrag_adapter import (
     LightRagConfigurationError,
@@ -108,7 +108,7 @@ class LightWorklogIndexService:
 
     async def index_worklogs(
         self, worklog_ids: list[int], *, already_mutated: bool = False,
-    ) -> WorklogLightIndexResponse:
+    ) -> WorklogLightIndexExecutionResponse:
         """원본 조회부터 팀 사본 게시까지 동일 업무일지 mutation을 직렬화한다."""
         async with worklog_mutation_locks([f"worklog:{item}" for item in worklog_ids]):
             return await self._index_worklogs(worklog_ids, already_mutated=already_mutated)
@@ -119,12 +119,12 @@ class LightWorklogIndexService:
         *,
         already_mutated: bool = False,
         prepared: PreparedLightWorklogDocuments | None = None,
-    ) -> WorklogLightIndexResponse:
+    ) -> WorklogLightIndexExecutionResponse:
         """요청된 업무일지 ID 순서대로 text/custom KG 통합 index 결과를 반환한다."""
         if not worklog_ids:
             if already_mutated and self._cache is not None:
                 await self._cache.bump_version()
-            return WorklogLightIndexResponse(items=[])
+            return WorklogLightIndexExecutionResponse(items=[])
 
         prepared = prepared or await self.prepare_documents(worklog_ids)
         try:
@@ -136,7 +136,7 @@ class LightWorklogIndexService:
 
         missing_worklog_ids = set(prepared.missing_worklog_ids)
         indexed_worklog_ids = set(prepared.found_worklog_ids) - set(failed_found_ids)
-        return WorklogLightIndexResponse(
+        return WorklogLightIndexExecutionResponse(
             items=[
                 self._build_response_item(
                     worklog_id=worklog_id,
@@ -148,7 +148,7 @@ class LightWorklogIndexService:
             ]
         )
 
-    async def reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
+    async def reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexExecutionResponse:
         """삭제와 최신 원본 조회/색인을 하나의 업무일지 mutation으로 묶는다."""
         async with worklog_mutation_locks([f"worklog:{item}" for item in worklog_ids]):
             try:
@@ -158,7 +158,7 @@ class LightWorklogIndexService:
                     await self._cache.bump_version()
                 raise
 
-    async def _reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexResponse:
+    async def _reindex_worklogs(self, worklog_ids: list[int]) -> WorklogLightIndexExecutionResponse:
         """생존 원본의 팀으로 부분 색인을 복구하고 삭제된 원본은 기록된 소유권으로 정리한다."""
         prepared = await self.prepare_documents(worklog_ids)
         adapter = (self._adapter_factory or get_lightrag_worklog_index_adapter)()
@@ -178,14 +178,14 @@ class LightWorklogIndexService:
             worklog_ids, prepared=prepared,
             already_mutated=bool(prepared.missing_worklog_ids),
         )
-        return WorklogLightIndexResponse(items=[
-            WorklogLightIndexItem(worklogId=item.worklog_id, indexed=False,
+        return WorklogLightIndexExecutionResponse(items=[
+            WorklogLightIndexExecutionItem(worklogId=item.worklog_id, indexed=False,
                                  error=delete_failed_items[item.worklog_id])
             if item.worklog_id in delete_failed_items else item
             for item in indexed_response.items
         ])
 
-    async def delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteResponse:
+    async def delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteExecutionResponse:
         """동일 업무일지의 원본 조회/색인과 삭제를 직렬화한다."""
         async with worklog_mutation_locks([f"worklog:{item}" for item in worklog_ids]):
             try:
@@ -194,31 +194,31 @@ class LightWorklogIndexService:
                 if worklog_ids and self._cache is not None:
                     await self._cache.bump_version()
 
-    async def _delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteResponse:
+    async def _delete_worklogs(self, worklog_ids: list[int]) -> WorklogLightDeleteExecutionResponse:
         """요청된 업무일지 문서를 LightRAG에서 삭제하고 캐시 버전을 증가시킨다."""
         adapter = (self._adapter_factory or get_lightrag_worklog_index_adapter)()
-        items: list[WorklogLightDeleteItem] = []
+        items: list[WorklogLightDeleteExecutionItem] = []
 
         for worklog_id in worklog_ids:
             try:
                 await self._delete_document(adapter, f"worklog-{worklog_id}")
-                items.append(WorklogLightDeleteItem(worklogId=worklog_id, deleted=True))
+                items.append(WorklogLightDeleteExecutionItem(worklogId=worklog_id, deleted=True))
             except LightRagConfigurationError:
                 raise
             except LightRagDeleteTimeoutError:
                 items.append(
-                    WorklogLightDeleteItem(
+                    WorklogLightDeleteExecutionItem(
                         worklogId=worklog_id, deleted=False, error=ERROR_LIGHTRAG_DELETE_TIMEOUT
                     )
                 )
             except LightRagDeleteFailedError:
                 items.append(
-                    WorklogLightDeleteItem(
+                    WorklogLightDeleteExecutionItem(
                         worklogId=worklog_id, deleted=False, error=ERROR_LIGHTRAG_DELETE_FAILED
                     )
                 )
 
-        return WorklogLightDeleteResponse(items=items)
+        return WorklogLightDeleteExecutionResponse(items=items)
 
     async def _delete_document(self, adapter: Any, document_id: str) -> None:
         """팀 사본을 먼저 삭제하고 마지막에 전역 원본/소유권 레코드를 지운다."""
@@ -353,17 +353,17 @@ class LightWorklogIndexService:
         missing_worklog_ids: set[int],
         indexed_worklog_ids: set[int],
         failed_found_ids: dict[int, str],
-    ) -> WorklogLightIndexItem:
+    ) -> WorklogLightIndexExecutionItem:
         """업무일지 ID 하나의 통합 index 응답 item을 만든다."""
         if worklog_id in missing_worklog_ids:
-            return WorklogLightIndexItem(
+            return WorklogLightIndexExecutionItem(
                 worklogId=worklog_id,
                 indexed=False,
                 error=ERROR_WORKLOG_NOT_FOUND,
             )
         if worklog_id in indexed_worklog_ids:
-            return WorklogLightIndexItem(worklogId=worklog_id, indexed=True)
-        return WorklogLightIndexItem(
+            return WorklogLightIndexExecutionItem(worklogId=worklog_id, indexed=True)
+        return WorklogLightIndexExecutionItem(
             worklogId=worklog_id,
             indexed=False,
             error=failed_found_ids[worklog_id],

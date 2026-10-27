@@ -20,15 +20,19 @@ from app.light.v4.service.lightrag_adapter import close_lightrag_worklog_index_a
 from app.light.v4.service.taskgroup_search import apply_taskgroup_search_patch
 from app.light.v4.service.worklog_team_scope import close_lightrag_team_scope_adapter
 from app.router import api_router
+from app.service.worklog_index_result_delivery import run_result_delivery_loop
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """관측을 초기화하고 종료 시 storage 정리 후 대기 중인 trace를 전송한다."""
     initialize_langfuse()
+    result_delivery = asyncio.create_task(run_result_delivery_loop())
     try:
         yield
     finally:
+        result_delivery.cancel()
+        await asyncio.gather(result_delivery, return_exceptions=True)
         try:
             try:
                 await close_lightrag_team_scope_adapter()

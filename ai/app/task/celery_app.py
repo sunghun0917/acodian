@@ -11,6 +11,7 @@ celery_app = Celery(
         "app.task.tagging_tasks",
         "app.task.embedding_tasks",
         "app.task.file_tasks",
+        "app.task.light_worklog_tasks",
     ],
 )
 
@@ -21,5 +22,10 @@ celery_app.conf.update(
     timezone="Asia/Seoul",
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    task_time_limit=settings.celery_task_time_limit_seconds,
     task_always_eager=settings.celery_task_always_eager,
+    task_routes={
+        "worklog.light_index": {"queue": "worklog_index"},
+        "worklog.light_index_result": {"queue": "worklog_index"},
+    },
 )

@@ -118,6 +118,7 @@ ai/
 | `app/light/v4/service/worklog_team_scope.py`, `tests/test_light_worklog_team_scope.py` | 팀 workspace 검색 사전 격리·처리 상태와 최신 업무 DB 문맥 조회 |
 | `app/light/v4/store/worklog_custom_kg_tracking.py`, `tests/test_light_worklog_custom_kg_tracking.py` | 확정 KG 문서 삭제 추적·공유 노드 복원 |
 | `app/light/v4/service/lightrag_adapter.py`, `tests/test_light_worklog_pg_*.py` | 기본 PG 저장소 설정·workspace 검증·색인 팀 소유권 |
+| `app/task/light_worklog_tasks.py`, `app/task/worker_runner.py`, `app/store/worklog_index_result_store.py`, `app/service/worklog_index_result_delivery.py`, `tests/test_light_worklog_tasks.py`, `tests/test_worklog_index_result_store.py`, `tests/test_worklog_index_result_delivery.py`, `tests/test_light_worker_runtime_integration.py` | 색인 실행 기한·시작 승인 재시도·AI 결과 보관·콜백 재전송·워커 복구 |
 
 ## 공유 파일과 수정 규칙
 
