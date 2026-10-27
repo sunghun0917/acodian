@@ -27,57 +27,38 @@ public class WorklogLightIndexClient {
                 .build();
     }
 
-    /** 내부 토큰이 설정된 경우에만 AI 삭제 결과의 ID별 성공을 확인한다. */
+    /** 삭제 접수를 확인하며 실행 결과는 별도 콜백으로 반영한다. */
     public void requestDelete(TriggerWorklogLightDeleteDto.Request request) {
-        if (internalToken == null || internalToken.isBlank()) {
-            throw new IllegalStateException("AI 내부 토큰이 없어 업무일지 삭제를 요청할 수 없습니다");
-        }
-        TriggerWorklogLightDeleteDto.Response response = restClient.post()
-                .uri(WORKLOG_LIGHT_DELETE_PATH)
-                .header("X-AI-Internal-Token", internalToken)
-                .body(request)
-                .retrieve()
-                .body(TriggerWorklogLightDeleteDto.Response.class);
-        if (response == null || response.items() == null || response.items().size() != request.worklogIds().size()
-                || request.worklogIds().stream().anyMatch(id -> response.items().stream()
-                .filter(item -> id.equals(item.worklogId()) && item.deleted()).count() != 1)) {
-            throw new IllegalStateException("AI Light 업무일지 삭제 결과가 실패 또는 누락되었습니다");
-        }
+        request(WORKLOG_LIGHT_DELETE_PATH, request, request.worklogIds(), request.requestId());
     }
 
-    /** 내부 토큰을 필수로 전송하고 HTTP 성공이어도 ID별 색인 실패나 누락은 후처리 실패로 전달한다. */
+    /** 최초 색인은 202 및 건별 브로커 발행 확인이 있어야 전달 완료로 인정한다. */
     public void requestIndex(TriggerWorklogLightIndexDto.Request request) {
-        if (internalToken == null || internalToken.isBlank()) {
-            throw new IllegalStateException("AI 내부 토큰이 없어 업무일지 색인을 요청할 수 없습니다");
-        }
-        TriggerWorklogLightIndexDto.Response response = restClient.post()
-                .uri(WORKLOG_LIGHT_INDEX_PATH)
-                .header("X-AI-Internal-Token", internalToken)
-                .body(request)
-                .retrieve()
-                .body(TriggerWorklogLightIndexDto.Response.class);
-        if (response == null || response.items() == null || response.items().size() != request.worklogIds().size()
-                || request.worklogIds().stream().anyMatch(id -> response.items().stream()
-                .filter(item -> id.equals(item.worklogId()) && item.indexed()).count() != 1)) {
-            throw new IllegalStateException("AI Light 업무일지 색인 결과가 실패 또는 누락되었습니다");
-        }
+        request(WORKLOG_LIGHT_INDEX_PATH, request, request.worklogIds(), request.requestId());
     }
 
-    /** 수정 경로는 보호된 교체 endpoint 만 호출하고 ID별 성공을 확인한다. */
+    /** 재색인도 최초 색인과 동일한 비동기 접수 계약을 적용한다. */
     public void requestReindex(TriggerWorklogLightIndexDto.Request request) {
-        if (internalToken == null || internalToken.isBlank()) {
-            throw new IllegalStateException("AI 내부 토큰이 없어 업무일지 재색인을 요청할 수 없습니다");
+        request(WORKLOG_LIGHT_REINDEX_PATH, request, request.worklogIds(), request.requestId());
+    }
+
+    /** 동기 200·누락·중복·다른 요청 응답을 전달 성공으로 오인하지 않는다. */
+    private void request(String path, Object body, java.util.List<Long> ids, java.util.UUID requestId) {
+        if (internalToken == null || internalToken.isBlank() || requestId == null) {
+            throw new IllegalStateException("AI 내부 토큰과 요청 식별자가 필요합니다");
         }
-        TriggerWorklogLightIndexDto.Response response = restClient.post()
-                .uri(WORKLOG_LIGHT_REINDEX_PATH)
-                .header("X-AI-Internal-Token", internalToken)
-                .body(request)
-                .retrieve()
-                .body(TriggerWorklogLightIndexDto.Response.class);
-        if (response == null || response.items() == null || response.items().size() != request.worklogIds().size()
-                || request.worklogIds().stream().anyMatch(id -> response.items().stream()
-                .filter(item -> id.equals(item.worklogId()) && item.indexed()).count() != 1)) {
-            throw new IllegalStateException("AI Light 업무일지 재색인 결과가 실패 또는 누락되었습니다");
+        var response = restClient.post().uri(path)
+                .header("X-AI-Internal-Token", internalToken).body(body).retrieve()
+                .toEntity(TriggerWorklogLightIndexDto.Response.class);
+        var accepted = response.getBody();
+        if (response.getStatusCode().value() != 202 || accepted == null || accepted.items() == null
+                || accepted.items().size() != ids.size()
+                || accepted.items().stream().filter(java.util.Objects::nonNull)
+                .map(TriggerWorklogLightIndexDto.Item::taskId).distinct().count() != ids.size()
+                || ids.stream().anyMatch(id -> accepted.items().stream().filter(item -> item != null
+                && id.equals(item.worklogId()) && requestId.equals(item.requestId())
+                && item.taskId() != null && !item.taskId().isBlank()).count() != 1)) {
+            throw new IllegalStateException("AI Light 업무일지 접수 결과가 실패 또는 누락되었습니다");
         }
     }
 

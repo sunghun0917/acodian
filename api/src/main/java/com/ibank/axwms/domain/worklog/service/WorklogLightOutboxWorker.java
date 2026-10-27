@@ -53,15 +53,17 @@ public class WorklogLightOutboxWorker {
                     repository.fail(claim, "AI Light 삭제 기능 비활성화");
                     return true;
                 }
-                client.requestDelete(TriggerWorklogLightDeleteDto.Request.of(claim.worklogId()));
+                client.requestDelete(TriggerWorklogLightDeleteDto.Request.of(claim.worklogId(), claim.requestId()));
             } else {
                 if (!properties.updateEnabled()) {
                     repository.fail(claim, "AI Light 재색인 기능 비활성화");
                     return true;
                 }
-                client.requestReindex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId()));
+                client.requestReindex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId(), claim.requestId()));
             }
-            repository.complete(claim);
+            log.info("Light index accepted worklogId={} requestId={} operation={} deliveryAttemptId={}",
+                    claim.worklogId(), claim.requestId(), claim.operation(), claim.token());
+            repository.awaitResult(claim);
         } catch (RuntimeException e) {
             repository.fail(claim, e.toString());
             log.warn("AI Light outbox 처리 실패 worklogId={} operation={} revision={}",
