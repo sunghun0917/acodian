@@ -11,6 +11,7 @@ import com.ibank.axwms.domain.worklog.WorklogStatus;
 import com.ibank.axwms.domain.worklog.dto.UpdateWorklogAiApiDto;
 import com.ibank.axwms.domain.worklog.entity.Worklog;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
 import com.ibank.axwms.global.enums.AiProcessingStatus;
 import com.ibank.axwms.global.error.BusinessException;
 import com.ibank.axwms.global.error.ErrorCode;
@@ -31,6 +32,9 @@ class InternalWorklogAiCallbackServiceTest {
 
     @Mock
     private WorklogRepository worklogRepository;
+
+    @Mock
+    private WorklogAiPostProcessOutboxRepository outboxRepository;
 
     @InjectMocks
     private InternalWorklogAiCallbackService internalWorklogAiCallbackService;

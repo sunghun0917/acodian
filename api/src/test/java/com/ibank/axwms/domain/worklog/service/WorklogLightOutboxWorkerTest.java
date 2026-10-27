@@ -27,22 +27,22 @@ class WorklogLightOutboxWorkerTest {
             true, true, true, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2), "token");
 
     @Test
-    void reindex_completes_claim_only_after_ai_success() {
-        Claim claim = new Claim(501L, "REINDEX", 2, UUID.randomUUID());
+    void reindex_waits_for_result_after_ai_acceptance() {
+        Claim claim = new Claim(501L, "REINDEX", 2, UUID.randomUUID(), new UUID(0, 1));
         when(repository.claim(eq(501L), any())).thenReturn(List.of(claim));
 
         new WorklogLightOutboxWorker(repository, client, properties).processOne(501L);
 
-        verify(client).requestReindex(TriggerWorklogLightIndexDto.Request.of(501L));
-        verify(repository).complete(claim);
+        verify(client).requestReindex(TriggerWorklogLightIndexDto.Request.of(501L, new java.util.UUID(0, 1)));
+        verify(repository).awaitResult(claim);
     }
 
     @Test
     void delete_takes_priority_and_is_retried_after_ai_failure() {
-        Claim claim = new Claim(501L, "DELETE", 3, UUID.randomUUID());
+        Claim claim = new Claim(501L, "DELETE", 3, UUID.randomUUID(), new UUID(0, 1));
         when(repository.claim(eq(501L), any())).thenReturn(List.of(claim));
         doThrow(new IllegalStateException("AI down")).when(client)
-                .requestDelete(TriggerWorklogLightDeleteDto.Request.of(501L));
+                .requestDelete(TriggerWorklogLightDeleteDto.Request.of(501L, new java.util.UUID(0, 1)));
 
         new WorklogLightOutboxWorker(repository, client, properties).processOne(501L);
 

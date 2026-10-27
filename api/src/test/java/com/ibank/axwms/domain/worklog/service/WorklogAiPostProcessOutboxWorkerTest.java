@@ -37,11 +37,12 @@ class WorklogAiPostProcessOutboxWorkerTest {
     void failed_stage_result_is_forwarded_to_transactional_finish() {
         Claim claim = claim();
         when(repository.claim(eq(501L), any())).thenReturn(List.of(claim));
-        when(service.process(claim)).thenReturn(List.of("LIGHT_INDEX"));
+        var result = new WorklogAiPostProcessService.ProcessResult(List.of(), UUID.randomUUID());
+        when(service.process(claim)).thenReturn(result);
 
         assertThat(worker.processOne(501L)).isTrue();
 
-        verify(service).finish(claim, List.of("LIGHT_INDEX"));
+        verify(service).finish(claim, result);
         verify(repository, never()).complete(any());
     }
 
@@ -50,8 +51,9 @@ class WorklogAiPostProcessOutboxWorkerTest {
     void failed_finish_keeps_job_for_retry() {
         Claim claim = claim();
         when(repository.claim(eq(501L), any())).thenReturn(List.of(claim));
-        when(service.process(claim)).thenReturn(List.of());
-        doThrow(new IllegalStateException("DB unavailable")).when(service).finish(claim, List.of());
+        var result = new WorklogAiPostProcessService.ProcessResult(List.of(), null);
+        when(service.process(claim)).thenReturn(result);
+        doThrow(new IllegalStateException("DB unavailable")).when(service).finish(claim, result);
 
         assertThat(worker.processOne(501L)).isTrue();
 
