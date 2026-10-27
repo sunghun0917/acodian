@@ -175,6 +175,9 @@ services:
       LIGHTRAG_QDRANT_API_KEY: ${LIGHTRAG_QDRANT_API_KEY:-}
       LIGHTRAG_QUERY_TIMEOUT_SECONDS: ${LIGHTRAG_QUERY_TIMEOUT_SECONDS:-120}
       API_BASE_URL: http://api:8100
+      WORKLOG_LIGHT_INDEX_RESULT_DIR: /app/data/worklog-index-results
+      WORKLOG_LIGHT_INDEX_TIMEOUT_SECONDS: ${WORKLOG_LIGHT_INDEX_TIMEOUT_SECONDS:-300}
+      CELERY_TASK_TIME_LIMIT_SECONDS: ${CELERY_TASK_TIME_LIMIT_SECONDS:-540}
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN required}
       # ai 가 api 를 호출할 때 쓰는 JWT 검증 키. api 와 동일 시크릿이어야 한다.
       JWT_SECRET: ${JWT_SECRET}
@@ -204,6 +207,8 @@ services:
   # 환경변수는 ai 서비스와 동일하게 유지해야 settings 로드/Gemini/S3/콜백 호출이 모두 작동한다.
   ai_worker:
     image: ${AI_IMAGE}
+    volumes:
+      - lightrag-data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -226,6 +231,9 @@ services:
       LIGHTRAG_QDRANT_URL: http://qdrant:6333
       LIGHTRAG_QDRANT_API_KEY: ${LIGHTRAG_QDRANT_API_KEY:-}
       API_BASE_URL: http://api:8100
+      WORKLOG_LIGHT_INDEX_RESULT_DIR: /app/data/worklog-index-results
+      WORKLOG_LIGHT_INDEX_TIMEOUT_SECONDS: ${WORKLOG_LIGHT_INDEX_TIMEOUT_SECONDS:-300}
+      CELERY_TASK_TIME_LIMIT_SECONDS: ${CELERY_TASK_TIME_LIMIT_SECONDS:-540}
       AI_INTERNAL_TOKEN: ${AI_INTERNAL_TOKEN:?AI_INTERNAL_TOKEN required}
       JWT_SECRET: ${JWT_SECRET}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -243,7 +251,7 @@ services:
       AWS_S3_BASE_PREFIX: ${AWS_S3_BASE_PREFIX}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-    command: ["celery", "-A", "app.task.celery_app", "worker", "--loglevel=INFO"]
+    command: ["celery", "-A", "app.task.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--queues=celery,worklog_index"]
     restart: unless-stopped
 
 volumes:
