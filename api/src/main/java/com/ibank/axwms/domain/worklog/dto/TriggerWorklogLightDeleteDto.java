@@ -2,25 +2,19 @@ package com.ibank.axwms.domain.worklog.dto;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
-
 import java.util.List;
+import java.util.UUID;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public final class TriggerWorklogLightDeleteDto {
-
-    /** AI 삭제 endpoint의 일괄 계약으로 단건 업무 ID를 전달한다. */
-    public record Request(List<Long> worklogIds) {
-        /** 단건 삭제 요청을 AI의 일괄 요청 형태로 변환한다. */
-        public static Request of(Long worklogId) {
-            return new Request(List.of(worklogId));
+    /** 전달 재시도에서도 동일 요청 식별자를 보존하는 일괄 접수 계약이다. */
+    public record Request(List<Long> worklogIds, UUID requestId) {
+        /** 단건 의도를 AI 일괄 접수 계약에 맞춘다. */
+        public static Request of(Long worklogId, UUID requestId) {
+            return new Request(List.of(worklogId), requestId);
         }
     }
-
-    /** HTTP 성공과 개별 삭제 성공을 구분하기 위한 응답이다. */
-    public record Response(List<Item> items) {
-    }
-
-    /** deleted=false면 AI 저장소에서 해당 문서 제거가 완료되지 않았다. */
-    public record Item(Long worklogId, boolean deleted, String error) {
-    }
+    /** 브로커 발행 식별자만 반환하며 실행 성공을 뜻하지 않는다. */
+    public record Response(List<Item> items) {}
+    public record Item(Long worklogId, UUID requestId, String taskId) {}
 }

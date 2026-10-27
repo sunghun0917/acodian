@@ -18,6 +18,7 @@ import com.ibank.axwms.global.error.BusinessException;
 import com.ibank.axwms.global.error.ErrorCode;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -52,23 +53,23 @@ public class WorklogAiPostProcessService {
      * DB 연결을 점유하지 않고 미완료 단계만 실행한다. 요약은 접수, 색인은 실제 완료 후 checkpoint한다.
      *
      * @param claim 등록 snapshot과 이전 성공 단계를 가진 현재 선점
-     * @return 재시도할 단계. 원격 접수 직후 checkpoint 전 장애는 중복 요청될 수 있다.
+     * @return 단계 실패와 색인 전달 실패 요청 ID. 원격 접수 직후 장애는 중복 요청될 수 있다.
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    public List<String> process(Claim claim) {
+    public ProcessResult process(Claim claim) {
         if (!outboxRepository.isWorklogActive(claim.worklogId())) {
-            return List.of();
+            return new ProcessResult(List.of(), null);
         }
         List<String> failedStages = new ArrayList<>();
         requestFileSummaries(claim, failedStages);
         requestWorklogPipeline(claim, failedStages);
-        requestLightIndex(claim, failedStages);
-        return List.copyOf(failedStages);
+        UUID failedLightRequestId = requestLightIndex(claim, failedStages);
+        return new ProcessResult(List.copyOf(failedStages), failedLightRequestId);
     }
 
     /** 상태·업무당 최초 결과 알림·Outbox 갱신을 함께 커밋하며 재선점된 작업에는 관여하지 않는다. */
     @Transactional
-    public void finish(Claim claim, List<String> failedStages) {
+    public void finish(Claim claim, ProcessResult result) {
         boolean active = outboxRepository.lockWorklog(claim.worklogId()).map(deleted -> !deleted).orElse(false);
         if (!outboxRepository.lockClaim(claim)) {
             return;
@@ -81,6 +82,31 @@ public class WorklogAiPostProcessService {
             return;
         }
         WorklogAiPostProcessRequestedEvent event = claim.event();
+        List<String> failedStages = new ArrayList<>(result.failedStages());
+        boolean terminalLightFailure = false;
+        if (worklogLightIndexProperties.enabled()) {
+            if (result.failedLightRequestId() != null && outboxRepository.pendingLightRequest(claim)
+                    .filter(result.failedLightRequestId()::equals).isPresent()) {
+                failedStages.add(LIGHT_INDEX_STAGE);
+            }
+            String lightState = outboxRepository.lightState(claim);
+            if ("PENDING".equals(lightState) || "RUNNING".equals(lightState)) {
+                if (outboxRepository.recoverTimedOutLightRequest(claim)) {
+                    outboxRepository.fail(claim, "LIGHT_INDEX_RESULT_TIMEOUT");
+                    return;
+                }
+                if (failedStages.isEmpty()) {
+                    outboxRepository.awaitLightResult(claim);
+                    return;
+                }
+            } else if ("FAILED".equals(lightState)) {
+                failedStages.add(LIGHT_INDEX_STAGE);
+                terminalLightFailure = outboxRepository.ownsLightRequest(claim);
+            } else if ("COMPLETED".equals(lightState)) {
+                failedStages.removeIf(LIGHT_INDEX_STAGE::equals);
+                outboxRepository.checkpoint(claim, LIGHT_INDEX_STAGE);
+            }
+        }
         boolean success = failedStages.isEmpty();
         if (success) {
             worklogAiProcessingStatusService.completeAiProcessing(event.worklogId());
@@ -92,6 +118,8 @@ public class WorklogAiPostProcessService {
                 event.worklogTitle(), success, failedStages);
         if (success) {
             outboxRepository.complete(claim);
+        } else if (terminalLightFailure) {
+            outboxRepository.suspendAfterLightFailure(claim, String.join(",", failedStages));
         } else {
             outboxRepository.fail(claim, String.join(",", failedStages));
         }
@@ -140,14 +168,31 @@ public class WorklogAiPostProcessService {
     }
 
     /**
-     * 비활성화된 Light index 는 운영 설정에 따른 정상 skip 으로 보고 실패 집계에서 제외한다.
+     * 전달 실패의 요청 ID를 보존하고 현재 요청 여부는 finish의 잠금 안에서 판정한다.
+     * 비활성화된 Light index는 운영 설정에 따른 정상 skip으로 처리한다.
      */
-    private void requestLightIndex(Claim claim, List<String> failedStages) {
-        executeStage(claim, LIGHT_INDEX_STAGE, () -> {
-            if (worklogLightIndexProperties.enabled()) {
-                worklogLightIndexClient.requestIndex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId()));
-            }
-        }, failedStages);
+    private UUID requestLightIndex(Claim claim, List<String> failedStages) {
+        if (!worklogLightIndexProperties.enabled()) {
+            executeStage(claim, LIGHT_INDEX_STAGE, () -> {}, failedStages);
+            return null;
+        }
+        UUID requestId = outboxRepository.pendingLightRequest(claim).orElse(null);
+        if (requestId == null) {
+            return null;
+        }
+        if (!outboxRepository.renewLease(claim)) {
+            throw new BusinessException(ErrorCode.COMMON_INTERNAL_SERVER_ERROR);
+        }
+        try {
+            worklogLightIndexClient.requestIndex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId(), requestId));
+            outboxRepository.acceptLightRequest(claim, requestId);
+            log.info("Light index accepted worklogId={} requestId={} operation=INDEX deliveryAttemptId={}",
+                    claim.worklogId(), requestId, claim.token());
+            return null;
+        } catch (RuntimeException e) {
+            log.warn("AI 색인 접수 실패 worklogId={} requestId={}", claim.worklogId(), requestId, e);
+            return requestId;
+        }
     }
 
     /** 요청 실패만 집계하고, 소유권이나 checkpoint 유실은 즉시 전파해 남은 외부 호출을 중단한다. */
@@ -170,4 +215,9 @@ public class WorklogAiPostProcessService {
             throw new BusinessException(ErrorCode.COMMON_INTERNAL_SERVER_ERROR);
         }
     }
+
+    /** 색인 전달 실패의 요청을 보존해 완료 잠금 이후 교체된 요청에 실패를 반영하지 않는다. */
+    public record ProcessResult(List<String> failedStages, UUID failedLightRequestId) {
+    }
+
 }
