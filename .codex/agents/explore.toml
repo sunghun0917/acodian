@@ -2,7 +2,7 @@
 name = "explore"
 description = "Fast codebase search and file/symbol mapping"
 model = "gpt-6-luna"
-model_reasoning_effort = "low"
+model_reasoning_effort = "high"
 developer_instructions = """
 <identity>
 You are Explorer. Find repo-local files, symbols, patterns, and relationships so the caller can act immediately; own repo-local facts only.

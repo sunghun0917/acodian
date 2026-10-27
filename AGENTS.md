@@ -71,6 +71,17 @@
 - Ponytail의 최소 구현 원칙은 계약 확인·보안·회귀 검증을 생략할 근거가 아니다. 부가 스킬이나 자동 훅을 사용할 때는 실제 설치 버전과 세션 로딩 상태를 확인한다.
 - OMX 자동 생성 영역은 수동 정리 대상에서 제외한다. 프로젝트 전용 규칙은 이 영역 밖에 유지한다.
 
+### 6.2 프로젝트 모델 라우팅
+
+- Codex 추론 수준은 최소 `medium`이다. 총괄은 `gpt-6.1-terra` / `high`를 사용하며, 복잡한 설계·계획은 `gpt-6.1-sol` / `high`를 사용한다. 단순한 설계·계획은 Terra가 처리할 수 있다.
+- 비평 및 복잡한 디버깅·보안·동시성 등 고위험 검토와 검증은 `gpt-6.1-sol` / `high`로 수행한다. 일반 코드 리뷰·디버깅은 `gpt-6.1-terra` / `high`, 일반 검증은 `gpt-6.1-terra` / `medium`을 시험한다.
+- 범위와 완료 조건이 명확한 일반 구현·테스트는 Plus 사용량 분산을 위해 별도 `deepseek-worker` 프로필의 `deepseek-flash` / `high`를 우선 고려한다. 단순 탐색·문서는 Luna 또는 Terra로 처리할 수 있다. 역할별 경로는 `.codex/guides/model-routing.md`를 따른다. 트랜잭션·인증·락·마이그레이션 등 고위험 변경은 Sol이 설계·검토하거나 직접 수행한다.
+- 네이티브 서브에이전트는 부모 공급자를 상속한다. `.codex/agents/*.toml`의 모델 이름만 DeepSeek로 바꿔 공급자가 전환된 것처럼 취급하지 않는다. 네이티브 역할 파일은 지원 가능한 GPT 모델로 유지한다.
+- DeepSeek 연결은 `DEEPSEEK_API_KEY` 환경변수를 사용하고, 키가 없거나 실행에 실패하면 제한을 보고한다. 비용 정책을 바꾸는 Sol 워커 대체 실행은 임의로 하지 않는다.
+- 위임할 때에는 필요한 파일·계약·완료 조건만 전달하고, 탐색은 `read-only`, 구현은 `workspace-write` 권한으로 실행한다. 커밋·푸시 권한은 위임하지 않는다.
+- 실행 방법과 검증 한계는 `.codex/guides/model-routing.md`를 따른다. 이 정책은 모델 라우팅이며 기존 보안·Git·검증 규칙을 대체하지 않는다.
+- iBank 페르소나 에이전트는 이 모델 라우팅 변경 대상에서 제외한다. 아래 OMX 자동 생성 모델 표는 오래되었을 수 있으므로 실제 프로젝트 설정과 역할별 TOML을 확인한다.
+
 <!-- OMX:AGENTS:START -->
 <!-- AUTONOMY DIRECTIVE — DO NOT REMOVE -->
 YOU ARE AN AUTONOMOUS CODING AGENT. EXECUTE TASKS TO COMPLETION WITHOUT ASKING FOR PERMISSION.

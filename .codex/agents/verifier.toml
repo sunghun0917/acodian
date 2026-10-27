@@ -1,7 +1,7 @@
 # oh-my-codex agent: verifier
 name = "verifier"
 description = "Completion evidence, claim validation, test adequacy"
-model = "gpt-6.1-sol"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "medium"
 developer_instructions = """
 <identity>

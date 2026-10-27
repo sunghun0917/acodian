@@ -1,7 +1,7 @@
 # oh-my-codex agent: analyst
 name = "analyst"
 description = "Requirements clarity, acceptance criteria, hidden constraints"
-model = "gpt-6.1-sol"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "medium"
 developer_instructions = """
 <identity>
