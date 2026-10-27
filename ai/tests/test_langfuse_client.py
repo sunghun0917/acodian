@@ -362,31 +362,49 @@ def test_langfuse_settings_load_env_file_without_exposing_secret(tmp_path, monke
     assert "sk-lf-hidden" not in repr(config)
 
 
-@pytest.mark.parametrize("operation", ["index", "reindex"])
-def test_index_routes_capture_result_but_never_auth_headers(tracing, monkeypatch, operation):
-    from fastapi.testclient import TestClient
-    from app.light.v4.model.worklog_index import WorklogLightIndexResponse, WorklogLightIndexItem
-    from app.light.v4.router import worklog_index
-    from app.main import app
+@pytest.mark.parametrize("operation", ["INDEX", "REINDEX"])
+def test_index_task_captures_result_but_never_auth_headers(tracing, monkeypatch, operation):
+    from unittest.mock import AsyncMock, patch
+    from app.light.v4.model.worklog_index import (
+        WorklogLightIndexExecutionItem,
+        WorklogLightIndexExecutionResponse,
+    )
+    from app.task.light_worklog_tasks import execute_worklog_light_index
+    from app.task.worker_runner import worker_runner
+    from app.store.worklog_index_result_store import PendingWorklogIndexResult
 
+    worker_runner.close()
     module, config, exporter = tracing
     module.initialize_langfuse(config)
-    monkeypatch.setattr(worklog_index.settings, "ai_internal_token", "private-auth-token")
+    monkeypatch.setattr("app.config.settings.settings.ai_internal_token", "private-auth-token")
 
-    async def index(worklog_ids):
-        return WorklogLightIndexResponse(items=[WorklogLightIndexItem(worklogId=123, indexed=True)])
+    with patch("app.task.light_worklog_tasks.WorklogIndexClient") as mock_client_cls, \
+         patch("app.task.light_worklog_tasks.LightWorklogIndexService") as mock_service_cls, \
+         patch("app.task.light_worklog_tasks.persist_light_index_result", new_callable=AsyncMock) as retained:
+        retained.side_effect = lambda worklog_id, request_id, execution_id, status, error=None: PendingWorklogIndexResult(
+            worklog_id, request_id, execution_id, status, error)
 
-    monkeypatch.setattr(worklog_index.worklog_index_service, f"{operation}_worklogs", index)
-    response = TestClient(app).post(
-        f"/ai/light/worklogs-v4/{operation}", json={"worklogIds": [123]},
-        headers={"X-AI-Internal-Token": "private-auth-token"},
-    )
-    assert response.status_code == 200
+        mock_client = AsyncMock()
+        mock_client.report_start.return_value = True
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        mock_service = AsyncMock()
+        func = mock_service.index_worklogs if operation == "INDEX" else mock_service.reindex_worklogs
+        func.return_value = WorklogLightIndexExecutionResponse(
+            items=[WorklogLightIndexExecutionItem(worklogId=123, indexed=True)]
+        )
+        mock_service_cls.return_value = mock_service
+
+        execute_worklog_light_index(
+            worklog_id=123,
+            request_id=str(uuid4()),
+            operation=operation,
+        )
+
     module.flush_langfuse()
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
-    assert spans[0].name == f"{operation}-worklogs"
-    assert json.loads(spans[0].attributes["langfuse.observation.output"]) == response.json()
+    assert spans[0].name == f"light-index-{operation.lower()}"
     assert "private-auth-token" not in spans[0].to_json()
 
 

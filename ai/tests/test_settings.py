@@ -7,6 +7,12 @@
 from app.config.settings import Settings, get_settings
 
 
+def test_worker_deadline_reserves_compensation_and_delivery_budget():
+    import pytest
+    with pytest.raises(ValueError, match="compensation and result delivery"):
+        Settings(_env_file=None, celery_task_time_limit_seconds=400, worklog_light_index_timeout_seconds=300)
+
+
 def test_answer_model_is_separate_and_blank_keeps_existing_candidates(monkeypatch):
     monkeypatch.delenv("LIGHTRAG_ANSWER_LLM_MODEL", raising=False)
     settings = Settings(_env_file=None, lightrag_llm_model="extract",

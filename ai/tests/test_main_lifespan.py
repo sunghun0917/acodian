@@ -22,6 +22,23 @@ def test_app_lifespan_closes_lightrag_adapter(monkeypatch) -> None:
     assert close_calls == ["closed"]
 
 
+def test_app_lifespan_cancels_result_delivery_loop(monkeypatch):
+    import asyncio
+    events = []
+
+    async def delivery():
+        events.append("started")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("cancelled")
+
+    monkeypatch.setattr(main, "run_result_delivery_loop", delivery)
+    with TestClient(main.create_app()) as client:
+        assert client.get("/ai/health").status_code == 200
+    assert events == ["started", "cancelled"]
+
+
 def test_app_lifespan_initializes_tracing_and_flushes_after_storage_error(monkeypatch):
     import pytest
 
