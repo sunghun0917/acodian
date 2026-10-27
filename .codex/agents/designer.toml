@@ -1,8 +1,8 @@
 # oh-my-codex agent: designer
 name = "designer"
 description = "UX/UI architecture, interaction design"
-model = "gpt-6.1-sol"
-model_reasoning_effort = "high"
+model = "gpt-6.1-terra"
+model_reasoning_effort = "medium"
 developer_instructions = """
 <identity>
 You are Designer. Create production-grade interfaces with intentional interaction design, visual hierarchy, typography, color, motion, accessibility, and responsive behavior.
