@@ -68,12 +68,16 @@ docker compose -f infra/compose.local.yml up -d --build
 이미 빌드된 이미지에서 `.env`만 변경했다면 AI와 worker를 재생성한다. 단순 `restart`로 새 환경변수가 반영되지는 않는다.
 
 ```powershell
-docker compose -f infra/compose.local.yml up -d --no-deps --force-recreate ai ai_worker
+docker compose -f infra/compose.local.yml up -d --no-deps --force-recreate ai ai_worker ai_index_worker
 ```
 
 로컬 Python AI 서버가 실행 중이면 먼저 종료하여 `8200` 포트 충돌을 피한다. API 콜백 기본 주소는 호스트의 `8100` 포트이므로 API도 컨테이너에서 접근 가능한 주소로 실행해야 한다. 컨테이너별 데이터 volume은 유지하고 `down -v`로 초기화하지 않는다. reranker는 첫 실행 시 모델을 내려받을 수 있다.
 
 배포용 `infra/compose.deploy.yml`은 서버 환경파일에서 DSN·workspace를 받아 AI와 worker에 함께 전달한다. 로컬 `ai/.env`와 배포 환경파일을 혼용하지 않는다.
+
+일반 AI Worker `ai_worker`는 `ai_general`만 소비한다. `ai_index_worker`는 `worklog_index`만 소비하며 동시 실행 수는 1이다. 기존 `celery` 큐는 소비하지 않으므로 이전 버전의 대기·재시도 작업이 남아 있다면 별도의 소비자가 필요하다. 롤백 시 구버전 Worker가 `ai_general`을 소비하지 못하므로 해당 큐를 처리할 호환 Worker를 유지하거나 안전하게 처리한 뒤 종료한다. Redis나 큐를 삭제하지 않는다. 직접 색인 실행이나 다른 인스턴스가 동시에 쓰지 않는지도 별도로 확인한다.
+
+일반 AI와 색인은 태그 생성 완료를 기다리지 않고 병렬로 실행한다. 색인이 AI 태그 저장보다 먼저 원본을 읽으면 확정 태그 관계가 다음 재색인까지 누락될 수 있으며, 태그 콜백은 재색인을 요청하지 않는다. 이는 수용된 동작이며 Worker 분리로 기존 경합의 빈도가 달라질 수 있다.
 
 ### pgAdmin 조회
 
@@ -112,8 +116,8 @@ Windows pgAdmin에는 Host `127.0.0.1`, Port `5434`, Maintenance database·Usern
 1. AI 검색·색인 사용을 중지하고 위 DB·계정·설정을 준비한다. 실제 업무 DB는 초기화하지 않는다.
 2. base workspace를 `axwms_pg_v1`로 지정한다. 기존 팀 workspace 생성 규칙이 새 base에서 별도 팀 namespace를 파생한다.
 3. PG·Neo4j·Qdrant가 모두 새 workspace 계열을 사용하는지 확인한다. 기존 전역/팀 색인을 새 PG 상태와 섞지 않는다.
-4. 현재 유효한 전체 업무 ID를 확인하여 기존 v4 index API에 설정된 batch 제한에 맞춰 전달한다. 내부 인증을 유지하고 색인 실행 주체는 하나로 제한한다.
-5. 응답의 문서별 성공·실패를 기록한다. 실패/timeout을 rollback으로 가정하지 말고 소유권·native 상태를 확인하여 정리·재시도한다.
+4. 현재 유효한 전체 업무 ID를 확인하고 각 업무의 현재 색인 요청을 API Outbox 경로로 등록한다. 내부 인증을 유지하고 색인 실행 주체는 하나로 제한한다.
+5. 접수 응답과 별도로 업무별 결과 콜백·상태를 기록한다. 실패/timeout을 rollback으로 가정하지 말고 소유권·native 상태를 확인하여 정리·재시도한다.
 6. 기존 cache의 `bump_version()`으로 전환 전 응답 cache를 무효화한다. Redis 전체를 비우지 않는다.
 7. 대표 검색과 SSE, 팀 이동 후 재색인, 원본 삭제 후 색인 삭제, 공유 사용자·태그 보존을 확인한다.
 
@@ -128,7 +132,13 @@ WHERE w.is_deleted = false AND t.deleted_at IS NULL
 ORDER BY w.team_id, w.worklog_id;
 ```
 
-새 workspace의 첫 구축은 `POST /ai/light/worklogs-v4/index`에 `{"worklogIds":[...]}`를 전달한다. `x-ai-internal-token` 헤더를 유지하고 최대 10건씩 순차 처리한다. HTTP 200만 보지 말고 각 항목의 `indexed=true`, `error=null`을 확인한다. API는 완료한 변경의 캐시 버전을 무효화하므로 Redis 전체 삭제는 필요 없다.
+현재 `POST /ai/light/worklogs-v4/index`의 요청은 `worklogIds`와 UUID `requestId`를 필요로 하며 내부 토큰으로 인증한다. 응답은 문서별 `worklogId`, `requestId`, `taskId`가 담긴 HTTP `202` 접수 결과다. 색인 성공 결과가 아니므로 Spring의 현재 요청·실행에 대한 완료 콜백과 저장소 상태를 확인한다. Worker의 시작 승인에는 업무별 현재 `light_index_request_id`가 일치해야 하므로 임의 UUID를 만들어 직접 호출하면 작업이 건너뛰어질 수 있다. 일괄 재구축 시에는 먼저 업무별 요청 권위를 등록하는 절차를 별도로 마련해야 하며, 이 문서에는 그 절차가 구현되어 있지 않다. 모델의 최대 배치 크기는 10건이며 실제 설정 제한은 더 작을 수 있다. Redis 전체 삭제는 필요 없다.
+
+### 2026-10-29 격리 E2E 확인
+
+별도 Spring Boot·업무 DB·Redis·일반 AI/색인 Worker와 별도 LightRAG PostgreSQL·Qdrant·Neo4j에서 가상 업무 한 건으로 확인했다. 실제 Gemini 요약과 태그 2건 생성, 전역·팀 색인 완료, 본문 수정 후 양쪽 문서의 재색인, 소프트 삭제 후 전역·팀 문서 및 해당 Outbox 행 정리를 확인했다. 기존 로컬 업무 DB와 색인 저장소는 사용하지 않았고 테스트 자원은 종료했다.
+
+첨부파일 요약, 검색 결과와 생성 태그 각각의 색인 관계는 이 E2E에서 확인하지 않았다. 별도 일반·SSE 검색 통합 테스트는 테스트 격리 설정의 전역 adapter 연결 오류로 실패했으므로 검색 E2E 성공 근거로 취급하지 않는다.
 
 새 전역 workspace에도 기존 안전한 Qdrant 초기화 함수를 사용하여 legacy collection 이관·삭제를 실행하지 않는다. 옛 JSON·그래프·벡터 데이터 삭제는 정확한 대상 namespace를 확인한 별도 작업이다. 공유 collection·Neo4j DB·PostgreSQL volume 전체를 삭제하지 않는다.
 
