@@ -52,19 +52,19 @@ docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
   -p "$PROJECT_NAME" \
-  pull api web ai ai_worker
+  pull api web ai ai_worker ai_index_worker
 
 docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
   -p "$PROJECT_NAME" \
-  rm -sf api web ai ai_worker || true
+  rm -sf api web ai ai_worker ai_index_worker || true
 
 docker compose \
   --env-file "$ENV_FILE" \
   -f "$COMPOSE_FILE" \
   -p "$PROJECT_NAME" \
-  up -d --remove-orphans postgres redis qdrant neo4j api web ai ai_worker
+  up -d --remove-orphans postgres redis qdrant neo4j api web ai ai_worker ai_index_worker
 
 echo "[remote-deploy] post-deploy state"
 docker compose \
