@@ -97,7 +97,7 @@ MR merge -> master push
 | `.dockerignore` (루트) | web 빌드 시 모노레포 루트 컨텍스트에서 제외할 파일 (DO-004) |
 | `infra/compose.deploy.yml` | EC2에서 실제로 사용하는 compose 파일 |
 | `infra/.env.example` | compose 렌더용 기본값 파일 (ADR-009) |
-| `infra/scripts/remote-deploy.sh` | 서버에서 api/web/ai 컨테이너를 멱등 배포하는 스크립트 (OPS-016) |
+| `infra/scripts/remote-deploy.sh` | 서버에서 api/web/ai와 두 AI Worker 컨테이너를 멱등 배포하는 스크립트 (OPS-016) |
 | `infra/nginx/sites-available/axwms.conf` | EC2 systemd nginx 의 단일 진입점 conf SSOT (ADR-015 / OPS-017) |
 | `infra/nginx/snippets/proxy-headers.conf` | 모든 location 의 공통 proxy header 묶음 |
 | `docs/infra/adr.yaml` | 인프라 의사결정 기록 |
@@ -528,7 +528,9 @@ GitLab auto-cancel 은 변경 영역(web/api/ai)이 아니라 ref 단위로 동�
 2. ghcr.io 에 `axwms-api:dev`, `axwms-web:dev`, `axwms-ai:dev` 등 `:<ref-slug>` + `:<sha>` 두 태그로 push
 3. CI가 staging 서버에 SSH 접속
 4. `compose.deploy.yml`, `remote-deploy.sh` 를 서버에 복사
-5. 서버에서 `docker compose pull api web ai` / `up -d --remove-orphans postgres redis api web ai` (OPS-016 의 멱등 흐름)
+5. 서버에서 API·web·AI와 일반 AI Worker `ai_worker`, 색인 Worker `ai_index_worker`를 pull 및 교체하고 상태 저장 서비스와 함께 시작한다 (OPS-016 의 멱등 흐름).
+
+일반 Worker는 `ai_general`을, 색인 Worker는 `worklog_index`만 소비한다. 기존 `celery` 큐에 이전 버전 작업이 남았다면 별도 소비자가 필요하다. 롤백 시 구버전이 `ai_general`을 읽지 못하므로 호환 Worker를 유지하거나 안전하게 처리한 뒤 종료한다. Redis 데이터를 삭제하지 않는다. 색인 Worker를 여러 프로세스로 늘리기 전에 프로세스 간 쓰기 조정을 별도로 검토한다.
 
 ### `master` merge 후
 같은 흐름으로 production 에 반영된다.
