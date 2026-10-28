@@ -105,6 +105,7 @@ ai/
 | `app/model/search.py` | 임베딩·검색 |
 | `app/model/tag_merge_model.py` | 태그 병합 후보 |
 | `app/task/embedding_tasks.py` | 임베딩·검색 |
+| `app/task/celery_app.py`, `tests/test_celery_routing.py`, `tests/test_celery_worker_compose.py`, `tests/test_celery_worker_isolation.py` | 일반 AI·색인 Celery 큐와 Worker 분리 |
 | `app/task/tagging_tasks.py` | 태그 |
 | `app/store/models.py` (Worklog/File Embedding) | 임베딩·검색 |
 | `app/store/embedding_store.py` | 임베딩·검색 |

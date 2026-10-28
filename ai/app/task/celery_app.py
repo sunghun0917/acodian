@@ -24,6 +24,7 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     task_time_limit=settings.celery_task_time_limit_seconds,
     task_always_eager=settings.celery_task_always_eager,
+    task_default_queue="ai_general",
     task_routes={
         "worklog.light_index": {"queue": "worklog_index"},
         "worklog.light_index_result": {"queue": "worklog_index"},
