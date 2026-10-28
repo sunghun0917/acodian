@@ -38,7 +38,12 @@ services:
   ai_worker:
     <<: *local-ai
     ports: []
-    command: ["celery", "-A", "app.task.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--queues=celery,worklog_index"]
+    command: ["celery", "-A", "app.task.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--hostname=general@%h", "--queues=ai_general"]
+
+  ai_index_worker:
+    <<: *local-ai
+    ports: []
+    command: ["celery", "-A", "app.task.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--hostname=index@%h", "--queues=worklog_index"]
 
   postgres:
     image: pgvector/pgvector:pg17
