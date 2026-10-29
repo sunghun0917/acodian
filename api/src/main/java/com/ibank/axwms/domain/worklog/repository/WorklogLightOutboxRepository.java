@@ -17,7 +17,7 @@ public class WorklogLightOutboxRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    /** 수정·삭제 트랜잭션에 참여하며 삭제 의도가 수정 의도보다 우선한다. */
+    /** 원본 트랜잭션에 참여하며 최신 색인 요청을 기록하고 삭제 의도를 우선한다. */
     @Transactional
     public void enqueue(Long worklogId, String operation) {
         UUID requestId = UUID.randomUUID();
@@ -26,26 +26,27 @@ public class WorklogLightOutboxRepository {
                     light_index_status = 'PENDING', light_index_error = NULL, light_index_completed_at = NULL
                 WHERE worklog_id = ?
                 """, requestId, worklogId);
+        if (!"DELETE".equals(operation)) {
+            jdbcTemplate.update("""
+                    UPDATE tb_worklog_ai_post_process_outbox SET terminal_failed = false,
+                        next_attempt_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE worklog_id = ?
+                    """, worklogId);
+        }
         jdbcTemplate.update("""
                 INSERT INTO tb_worklog_light_outbox (worklog_id, operation, request_id)
                 VALUES (?, ?, ?)
                 ON CONFLICT (worklog_id) DO UPDATE SET
                     operation = CASE WHEN tb_worklog_light_outbox.operation = 'DELETE'
-                                      OR EXCLUDED.operation = 'DELETE' THEN 'DELETE' ELSE 'REINDEX' END,
+                                      OR EXCLUDED.operation = 'DELETE' THEN 'DELETE' ELSE EXCLUDED.operation END,
                     revision = tb_worklog_light_outbox.revision + 1,
                     request_id = EXCLUDED.request_id,
                     attempts = 0,
+                    terminal_failed = false,
                     next_attempt_at = CURRENT_TIMESTAMP,
                     last_error = NULL,
                     updated_at = CURRENT_TIMESTAMP
                 """, worklogId, operation, requestId);
-        jdbcTemplate.update("""
-                UPDATE tb_worklog_ai_post_process_outbox
-                SET light_request_id = ?, light_accepted = true,
-                    completed_stages = array_remove(completed_stages, 'LIGHT_INDEX'),
-                    next_attempt_at = CURRENT_TIMESTAMP
-                WHERE worklog_id = ?
-                """, requestId, worklogId);
     }
 
     /** null ID는 전체 대기 작업을 대상으로 하며 다른 인스턴스가 점유하지 않은 작업 하나를 원자적으로 선점한다. */
@@ -56,6 +57,7 @@ public class WorklogLightOutboxRepository {
                 FROM (
                     SELECT worklog_id FROM tb_worklog_light_outbox
                     WHERE (CAST(? AS BIGINT) IS NULL OR worklog_id = ?)
+                      AND NOT terminal_failed
                       AND next_attempt_at <= CURRENT_TIMESTAMP
                       AND (lease_until IS NULL OR lease_until < CURRENT_TIMESTAMP)
                     ORDER BY next_attempt_at, worklog_id
@@ -75,7 +77,7 @@ public class WorklogLightOutboxRepository {
                 UPDATE tb_worklog_light_outbox
                 SET next_attempt_at = CURRENT_TIMESTAMP + INTERVAL '10 minutes',
                     claim_token = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
-                WHERE worklog_id = ? AND revision = ? AND claim_token = ?
+                WHERE worklog_id = ? AND revision = ? AND claim_token = ? AND NOT terminal_failed
                 """, claim.worklogId(), claim.revision(), claim.token());
         jdbcTemplate.update("""
                 UPDATE tb_worklog_light_outbox SET claim_token = NULL, lease_until = NULL
@@ -95,12 +97,23 @@ public class WorklogLightOutboxRepository {
         jdbcTemplate.update("""
                 UPDATE tb_worklog_light_outbox SET
                     attempts = attempts + 1,
+                    terminal_failed = (operation = 'INDEX'),
                     next_attempt_at = CURRENT_TIMESTAMP
                         + (LEAST(300, CAST(POWER(2, LEAST(attempts, 8)) AS INTEGER)) * INTERVAL '1 second'),
                     lease_until = NULL, claim_token = NULL,
                     last_error = LEFT(?, 1000), updated_at = CURRENT_TIMESTAMP
                 WHERE worklog_id = ? AND request_id = ?
                 """, error, worklogId, requestId);
+    }
+
+    /** 최초 색인 실패는 수동 재요청까지 중단하고 수정·삭제는 계속 재전달한다. */
+    public boolean isTerminalFailure(Long worklogId) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                SELECT EXISTS (SELECT 1 FROM tb_worklog_light_outbox o
+                    JOIN tb_worklog w ON w.worklog_id = o.worklog_id
+                      AND w.light_index_request_id = o.request_id
+                    WHERE o.worklog_id = ? AND o.terminal_failed)
+                """, Boolean.class, worklogId));
     }
 
     /** 실패 revision 에만 지수 백오프를 부여하고 새 revision 은 즉시 재시도 가능하게 한다. */

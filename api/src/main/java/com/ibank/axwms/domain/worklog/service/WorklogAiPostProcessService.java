@@ -5,20 +5,17 @@ import com.ibank.axwms.domain.file.external.AiFileSummaryProperties;
 import com.ibank.axwms.domain.file.external.FileSummaryClient;
 import com.ibank.axwms.domain.file.service.FileService;
 import com.ibank.axwms.domain.notification.service.NotificationService;
-import com.ibank.axwms.domain.worklog.dto.TriggerWorklogLightIndexDto;
 import com.ibank.axwms.domain.worklog.dto.TriggerWorklogPipelineDto;
 import com.ibank.axwms.domain.worklog.event.WorklogAiPostProcessRequestedEvent;
-import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.AiWorklogPipelineProperties;
-import com.ibank.axwms.domain.worklog.external.WorklogLightIndexClient;
 import com.ibank.axwms.domain.worklog.external.WorklogPipelineClient;
 import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository.Claim;
+import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository;
 import com.ibank.axwms.global.error.BusinessException;
 import com.ibank.axwms.global.error.ErrorCode;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -26,7 +23,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 업무 생성 이후 AI 파일 요약, 본문 파이프라인, Light index 요청을 하나의 결과 알림으로 묶는 후처리 서비스다.
+ * 일반 AI 요청과 최신 색인 결과를 하나의 등록 결과 알림으로 집계한다.
  */
 @Slf4j
 @Service
@@ -42,29 +39,27 @@ public class WorklogAiPostProcessService {
     private final FileService fileService;
     private final AiFileSummaryProperties fileSummaryProperties;
     private final WorklogPipelineClient worklogPipelineClient;
-    private final WorklogLightIndexClient worklogLightIndexClient;
     private final AiWorklogPipelineProperties worklogPipelineProperties;
-    private final AiWorklogLightIndexProperties worklogLightIndexProperties;
     private final NotificationService notificationService;
     private final WorklogAiProcessingStatusService worklogAiProcessingStatusService;
     private final WorklogAiPostProcessOutboxRepository outboxRepository;
+    private final WorklogLightOutboxRepository lightOutboxRepository;
 
     /**
-     * DB 연결을 점유하지 않고 미완료 단계만 실행한다. 요약은 접수, 색인은 실제 완료 후 checkpoint한다.
+     * DB 연결을 점유하지 않고 일반 AI의 미접수 단계만 실행한다.
      *
      * @param claim 등록 snapshot과 이전 성공 단계를 가진 현재 선점
-     * @return 단계 실패와 색인 전달 실패 요청 ID. 원격 접수 직후 장애는 중복 요청될 수 있다.
+     * @return 단계별 접수 실패. 원격 접수 직후 장애는 중복 요청될 수 있다.
      */
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public ProcessResult process(Claim claim) {
         if (!outboxRepository.isWorklogActive(claim.worklogId())) {
-            return new ProcessResult(List.of(), null);
+            return new ProcessResult(List.of());
         }
         List<String> failedStages = new ArrayList<>();
         requestFileSummaries(claim, failedStages);
         requestWorklogPipeline(claim, failedStages);
-        UUID failedLightRequestId = requestLightIndex(claim, failedStages);
-        return new ProcessResult(List.copyOf(failedStages), failedLightRequestId);
+        return new ProcessResult(List.copyOf(failedStages));
     }
 
     /** 상태·업무당 최초 결과 알림·Outbox 갱신을 함께 커밋하며 재선점된 작업에는 관여하지 않는다. */
@@ -79,33 +74,24 @@ public class WorklogAiPostProcessService {
             return;
         }
         if (outboxRepository.activateQueuedRetry(claim)) {
+            lightOutboxRepository.enqueue(claim.worklogId(), "INDEX");
             return;
         }
         WorklogAiPostProcessRequestedEvent event = claim.event();
-        List<String> failedStages = new ArrayList<>(result.failedStages());
+        List<String> failedStages = new ArrayList<>(outboxRepository.pendingFailedStages(claim));
+        for (String stage : result.failedStages()) {
+            if (!failedStages.contains(stage)) {
+                failedStages.add(stage);
+            }
+        }
         boolean terminalLightFailure = false;
-        if (worklogLightIndexProperties.enabled()) {
-            if (result.failedLightRequestId() != null && outboxRepository.pendingLightRequest(claim)
-                    .filter(result.failedLightRequestId()::equals).isPresent()) {
-                failedStages.add(LIGHT_INDEX_STAGE);
-            }
-            String lightState = outboxRepository.lightState(claim);
-            if ("PENDING".equals(lightState) || "RUNNING".equals(lightState)) {
-                if (outboxRepository.recoverTimedOutLightRequest(claim)) {
-                    outboxRepository.fail(claim, "LIGHT_INDEX_RESULT_TIMEOUT");
-                    return;
-                }
-                if (failedStages.isEmpty()) {
-                    outboxRepository.awaitLightResult(claim);
-                    return;
-                }
-            } else if ("FAILED".equals(lightState)) {
-                failedStages.add(LIGHT_INDEX_STAGE);
-                terminalLightFailure = outboxRepository.ownsLightRequest(claim);
-            } else if ("COMPLETED".equals(lightState)) {
-                failedStages.removeIf(LIGHT_INDEX_STAGE::equals);
-                outboxRepository.checkpoint(claim, LIGHT_INDEX_STAGE);
-            }
+        String lightState = outboxRepository.lightState(claim);
+        if ("PENDING".equals(lightState) || "RUNNING".equals(lightState)) {
+            outboxRepository.awaitLightResult(claim, failedStages);
+            return;
+        } else if ("FAILED".equals(lightState)) {
+            failedStages.add(LIGHT_INDEX_STAGE);
+            terminalLightFailure = lightOutboxRepository.isTerminalFailure(claim.worklogId());
         }
         boolean success = failedStages.isEmpty();
         if (success) {
@@ -116,6 +102,9 @@ public class WorklogAiPostProcessService {
         notificationService.createWorklogAiPostProcessResultNotification(
                 event.authorId(), event.departmentId(), event.teamId(), event.worklogId(),
                 event.worklogTitle(), success, failedStages);
+        if (!success) {
+            outboxRepository.clearPendingFailedStages(claim);
+        }
         if (success) {
             outboxRepository.complete(claim);
         } else if (terminalLightFailure) {
@@ -167,34 +156,6 @@ public class WorklogAiPostProcessService {
         }, failedStages);
     }
 
-    /**
-     * 전달 실패의 요청 ID를 보존하고 현재 요청 여부는 finish의 잠금 안에서 판정한다.
-     * 비활성화된 Light index는 운영 설정에 따른 정상 skip으로 처리한다.
-     */
-    private UUID requestLightIndex(Claim claim, List<String> failedStages) {
-        if (!worklogLightIndexProperties.enabled()) {
-            executeStage(claim, LIGHT_INDEX_STAGE, () -> {}, failedStages);
-            return null;
-        }
-        UUID requestId = outboxRepository.pendingLightRequest(claim).orElse(null);
-        if (requestId == null) {
-            return null;
-        }
-        if (!outboxRepository.renewLease(claim)) {
-            throw new BusinessException(ErrorCode.COMMON_INTERNAL_SERVER_ERROR);
-        }
-        try {
-            worklogLightIndexClient.requestIndex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId(), requestId));
-            outboxRepository.acceptLightRequest(claim, requestId);
-            log.info("Light index accepted worklogId={} requestId={} operation=INDEX deliveryAttemptId={}",
-                    claim.worklogId(), requestId, claim.token());
-            return null;
-        } catch (RuntimeException e) {
-            log.warn("AI 색인 접수 실패 worklogId={} requestId={}", claim.worklogId(), requestId, e);
-            return requestId;
-        }
-    }
-
     /** 요청 실패만 집계하고, 소유권이나 checkpoint 유실은 즉시 전파해 남은 외부 호출을 중단한다. */
     private void executeStage(Claim claim, String stage, Runnable request, List<String> failedStages) {
         if (claim.completedStages().contains(stage)) {
@@ -216,8 +177,8 @@ public class WorklogAiPostProcessService {
         }
     }
 
-    /** 색인 전달 실패의 요청을 보존해 완료 잠금 이후 교체된 요청에 실패를 반영하지 않는다. */
-    public record ProcessResult(List<String> failedStages, UUID failedLightRequestId) {
+    /** 일반 AI 단계의 접수 실패만 완료 트랜잭션에 전달한다. */
+    public record ProcessResult(List<String> failedStages) {
     }
 
 }

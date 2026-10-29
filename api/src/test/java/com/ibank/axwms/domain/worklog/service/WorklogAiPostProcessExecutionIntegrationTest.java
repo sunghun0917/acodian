@@ -50,20 +50,21 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @TestPropertySource(properties = {
         "ai.worklog-post-process.outbox-poll-delay-ms=3600000",
         "ai.worklog-light-index.outbox-poll-delay-ms=3600000",
-        "ai.worklog-pipeline.enabled=true",
-        "ai.worklog-light-index.enabled=true",
-        "ai.worklog-light-index.update-enabled=true",
-        "ai.worklog-light-index.delete-enabled=true"
+        "ai.worklog-pipeline.enabled=true"
 })
 class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSupport {
 
@@ -95,6 +96,9 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @MockitoBean
     private FileSummaryClient fileSummaryClient;
@@ -134,14 +138,204 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     @Autowired
     private InternalWorklogAiCallbackService summaryCallbackService;
 
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    @DisplayName("등록 최종 실패 집계와 새 재색인 요청은 어느 순서로 경합해도 최신 요청을 재개한다")
+    void index_failure_finish_and_reindex_enqueue_serialize_in_both_orders(boolean finishFirst) throws Exception {
+        Fixture fixture = seedFixture();
+        Worklog worklog = saveProcessingWorklog(fixture);
+        enqueueRegistration(fixture, worklog);
+        UUID original = currentRequest(worklog.getId());
+        UUID execution = UUID.randomUUID();
+        assertThat(lightIndexService.start(worklog.getId(), original, execution)).isTrue();
+        lightIndexService.result(worklog.getId(), original, execution, "FAILED", "INDEX_FAILED");
+        Claim claim = outboxRepository.claim(worklog.getId(), UUID.randomUUID()).getFirst();
+        assertThat(outboxRepository.checkpoint(claim, "WORKLOG_PIPELINE")).isTrue();
+
+        String applicationName = "i20-" + UUID.randomUUID();
+        var winnerReady = new java.util.concurrent.CountDownLatch(1);
+        var loserStarted = new java.util.concurrent.CountDownLatch(1);
+        var releaseWinner = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var winner = executor.submit(() -> {
+                new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                    jdbcTemplate.queryForObject("SELECT worklog_id FROM tb_worklog WHERE worklog_id = ? FOR UPDATE",
+                            Long.class, worklog.getId());
+                    if (finishFirst) {
+                        postProcessService.finish(claim, new WorklogAiPostProcessService.ProcessResult(List.of()));
+                    } else {
+                        lightOutbox.enqueue(worklog.getId(), "REINDEX");
+                    }
+                    winnerReady.countDown();
+                    try {
+                        if (!releaseWinner.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                            throw new AssertionError("선행 트랜잭션 해제 시간 초과");
+                        }
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(ex);
+                    }
+                });
+                return true;
+            });
+            try {
+                assertThat(winnerReady.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var loser = executor.submit(() -> {
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                        jdbcTemplate.queryForObject("SELECT set_config('application_name', ?, true)",
+                                String.class, applicationName);
+                        loserStarted.countDown();
+                        if (finishFirst) {
+                            lightOutbox.enqueue(worklog.getId(), "REINDEX");
+                        } else {
+                            postProcessService.finish(claim, new WorklogAiPostProcessService.ProcessResult(List.of()));
+                        }
+                    });
+                    return true;
+                });
+                assertThat(loserStarted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(awaitPostgresLock(applicationName)).isTrue();
+                releaseWinner.countDown();
+                assertThat(winner.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(loser.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            } finally {
+                releaseWinner.countDown();
+            }
+        }
+
+        UUID latest = currentRequest(worklog.getId());
+        assertThat(latest).isNotEqualTo(original);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT NOT terminal_failed FROM tb_worklog_ai_post_process_outbox WHERE worklog_id = ?
+                """, Boolean.class, worklog.getId())).isTrue();
+        assertThat(hasCheckpoint(worklog.getId(), "WORKLOG_PIPELINE")).isTrue();
+        lightIndexService.result(worklog.getId(), original, execution, "FAILED", "INDEX_FAILED");
+        UUID latestExecution = UUID.randomUUID();
+        assertThat(lightIndexService.start(worklog.getId(), latest, latestExecution)).isTrue();
+        lightIndexService.result(worklog.getId(), latest, latestExecution, "COMPLETED", null);
+        makeDue(worklog.getId());
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
+        assertThat(notificationCount(worklog.getId())).isEqualTo(1);
+        verifyNoInteractions(pipelineClient);
+    }
+
+    /** 경쟁 트랜잭션이 실제 PostgreSQL 행 잠금을 기다리는지 확인한 뒤 순서를 진행한다. */
+    private boolean awaitPostgresLock(String applicationName) {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                    SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                   WHERE application_name = ? AND wait_event_type = 'Lock')
+                    """, Boolean.class, applicationName))) {
+                return true;
+            }
+            java.util.concurrent.locks.LockSupport.parkNanos(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(10));
+        }
+        return false;
+    }
+
+    @Test
+    @DisplayName("Outbox가 제거된 과거 작업은 기존 요청 ID를 알아도 시작하거나 결과를 반영하지 못한다")
+    void abandoned_outbox_request_cannot_start_or_apply_result() {
+        Fixture fixture = seedFixture();
+        Worklog worklog = saveProcessingWorklog(fixture);
+        enqueueRegistration(fixture, worklog);
+        UUID request = currentRequest(worklog.getId());
+        UUID execution = UUID.randomUUID();
+        assertThat(lightIndexService.start(worklog.getId(), request, execution)).isTrue();
+        jdbcTemplate.update("DELETE FROM tb_worklog_light_outbox WHERE worklog_id = ?", worklog.getId());
+
+        assertThat(lightIndexService.start(worklog.getId(), request, UUID.randomUUID())).isFalse();
+        lightIndexService.result(worklog.getId(), request, execution, "COMPLETED", null);
+
+        assertThat(jdbcTemplate.queryForObject("SELECT light_index_status FROM tb_worklog WHERE worklog_id = ?",
+                String.class, worklog.getId())).isEqualTo("RUNNING");
+        assertThat(notificationCount(worklog.getId())).isZero();
+    }
+
+    @Test
+    @DisplayName("색인 대기 중 일반 AI 실패는 선행 재접수 성공에도 첫 실패 알림으로 보존한다")
+    void general_failure_waiting_for_index_is_not_lost_when_retry_succeeds() {
+        Fixture fixture = seedFixture();
+        Worklog worklog = saveProcessingWorklog(fixture);
+        enqueueRegistration(fixture, worklog);
+        doThrow(new IllegalStateException("general unavailable")).doNothing()
+                .when(pipelineClient).requestPipeline(any());
+
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(notificationCount(worklog.getId())).isZero();
+        makeDue(worklog.getId());
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(notificationCount(worklog.getId())).isZero();
+        assertThat(hasCheckpoint(worklog.getId(), "WORKLOG_PIPELINE")).isTrue();
+
+        UUID request = currentRequest(worklog.getId());
+        UUID execution = UUID.randomUUID();
+        assertThat(lightIndexService.start(worklog.getId(), request, execution)).isTrue();
+        lightIndexService.result(worklog.getId(), request, execution, "COMPLETED", null);
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.FAILED);
+        assertThat(notificationCount(worklog.getId())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT title FROM tb_notification WHERE reference_id = ?
+                AND notification_type = 'WORKLOG_AI_POST_PROCESS_RESULT'
+                """, String.class, worklog.getId())).contains("실패");
+
+        makeDue(worklog.getId());
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
+        assertThat(notificationCount(worklog.getId())).isEqualTo(1);
+        verify(pipelineClient, times(2)).requestPipeline(pipelineRequest(fixture, worklog));
+    }
+
+    @Test
+    @DisplayName("최초 색인 최종 실패 후 수정 재색인은 등록 집계를 재개하고 이전 콜백을 무시한다")
+    void failed_index_then_new_reindex_reactivates_registration_without_duplicate_notification() {
+        Fixture fixture = seedFixture();
+        Worklog worklog = saveProcessingWorklog(fixture);
+        enqueueRegistration(fixture, worklog);
+        UUID original = currentRequest(worklog.getId());
+        UUID originalExecution = UUID.randomUUID();
+        assertThat(lightIndexService.start(worklog.getId(), original, originalExecution)).isTrue();
+        lightIndexService.result(worklog.getId(), original, originalExecution, "FAILED", "INDEX_FAILED");
+        worker.processOne(worklog.getId());
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.FAILED);
+        assertThat(notificationCount(worklog.getId())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT terminal_failed FROM tb_worklog_ai_post_process_outbox WHERE worklog_id = ?
+                """, Boolean.class, worklog.getId())).isTrue();
+
+        lightOutbox.enqueue(worklog.getId(), "REINDEX");
+        UUID latest = currentRequest(worklog.getId());
+        assertThat(latest).isNotEqualTo(original);
+        lightIndexService.result(worklog.getId(), original, originalExecution, "COMPLETED", null);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT NOT terminal_failed FROM tb_worklog_ai_post_process_outbox WHERE worklog_id = ?
+                """, Boolean.class, worklog.getId())).isTrue();
+        worker.processOne(worklog.getId());
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.FAILED);
+
+        UUID latestExecution = UUID.randomUUID();
+        assertThat(lightIndexService.start(worklog.getId(), latest, latestExecution)).isTrue();
+        lightIndexService.result(worklog.getId(), latest, latestExecution, "COMPLETED", null);
+        makeDue(worklog.getId());
+        worker.processOne(worklog.getId());
+
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
+        assertThat(notificationCount(worklog.getId())).isEqualTo(1);
+        verify(pipelineClient, times(1)).requestPipeline(pipelineRequest(fixture, worklog));
+    }
+
     @Test
     @DisplayName("등록 색인 최종 실패는 자동 재발행 없이 수동 재요청으로만 복구한다")
     void terminal_registration_failure_waits_for_manual_retry() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
         UUID oldRequest = currentRequest(worklog.getId());
         UUID execution = UUID.randomUUID();
         lightIndexService.start(worklog.getId(), oldRequest, execution);
@@ -165,6 +359,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         UUID request = currentRequest(worklog.getId());
         assertThat(request).isNotEqualTo(oldRequest);
         doAnswer(invocation -> { completeIndex(invocation.getArgument(0)); return null; }).when(indexClient).requestIndex(any());
+        lightWorker.processOne(worklog.getId());
         makeDue(worklog.getId());
         assertThat(worker.processOne(worklog.getId())).isTrue();
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
@@ -172,31 +367,27 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     }
 
     @Test
-    @DisplayName("등록 접수 후 시작·결과 콜백이 없으면 만료 뒤 같은 요청으로 색인만 재발행한다")
+    @DisplayName("Light Outbox 접수 후 시작·결과가 없으면 같은 요청을 재발행한다")
     void registration_timeout_redelivers_only_unfinished_index() {
         for (boolean started : List.of(false, true)) {
             Fixture fixture = seedFixture();
             Worklog worklog = saveProcessingWorklog(fixture);
             org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-            outboxRepository.enqueue(event(fixture, worklog));
-            worker.processOne(worklog.getId());
+            enqueueRegistration(fixture, worklog);
+            assertThat(worker.processOne(worklog.getId())).isTrue();
             UUID request = currentRequest(worklog.getId());
+            assertThat(lightWorker.processOne(worklog.getId())).isTrue();
             if (started) lightIndexService.start(worklog.getId(), request, UUID.randomUUID());
             makeDue(worklog.getId());
             worker.processOne(worklog.getId());
             verify(indexClient, times(1)).requestIndex(TriggerWorklogLightIndexDto.Request.of(worklog.getId(), request));
-            jdbcTemplate.update("""
-                    UPDATE tb_worklog_ai_post_process_outbox
-                    SET light_result_deadline_at = CURRENT_TIMESTAMP - INTERVAL '1 second'
-                    WHERE worklog_id = ?
-                    """, worklog.getId());
-            makeDue(worklog.getId());
-            worker.processOne(worklog.getId());
             assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
             assertThat(notificationCount(worklog.getId())).isZero();
             doAnswer(invocation -> { completeIndex(invocation.getArgument(0)); return null; }).when(indexClient).requestIndex(any());
+            makeLightDue(worklog.getId());
+            assertThat(lightWorker.processOne(worklog.getId())).isTrue();
             makeDue(worklog.getId());
-            worker.processOne(worklog.getId());
+            assertThat(worker.processOne(worklog.getId())).isTrue();
             verify(indexClient, times(2)).requestIndex(TriggerWorklogLightIndexDto.Request.of(worklog.getId(), request));
             verify(pipelineClient, times(1)).requestPipeline(pipelineRequest(fixture, worklog));
             assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
@@ -210,12 +401,13 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
         lightOutbox.enqueue(worklog.getId(), "REINDEX");
         lightWorker.processOne(worklog.getId());
         UUID request = currentRequest(worklog.getId());
-        jdbcTemplate.update("UPDATE tb_worklog_ai_post_process_outbox SET light_result_deadline_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE worklog_id = ?", worklog.getId());
+        makeLightDue(worklog.getId());
         makeDue(worklog.getId());
         worker.processOne(worklog.getId());
         UUID execution = UUID.randomUUID();
@@ -233,8 +425,9 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
         UUID first = currentRequest(worklog.getId());
         UUID execution = UUID.randomUUID();
         lightIndexService.start(worklog.getId(), first, execution);
@@ -246,7 +439,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         worklogService.retryAiSummary(new CustomUserPrincipal(fixture.user().getId(), fixture.user().getEmail(), UserRole.MEMBER.name()), worklog.getId());
         worker.processOne(worklog.getId());
         assertThat(currentRequest(worklog.getId())).isNotEqualTo(obsolete);
-        assertThat(lightJobCount(worklog.getId())).isZero();
+        assertThat(lightJobCount(worklog.getId())).isEqualTo(1);
         assertThat(lightIndexService.start(worklog.getId(), obsolete, UUID.randomUUID())).isFalse();
     }
 
@@ -255,7 +448,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void failed_registration_callback_before_acceptance_stays_terminal() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         doAnswer(invocation -> {
             TriggerWorklogLightIndexDto.Request request = invocation.getArgument(0);
             UUID execution = UUID.randomUUID();
@@ -265,10 +458,12 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         }).when(indexClient).requestIndex(any());
 
         worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
+        makeDue(worklog.getId());
+        worker.processOne(worklog.getId());
 
         assertThat(jdbcTemplate.queryForObject("""
-                SELECT terminal_failed AND light_result_deadline_at IS NULL
-                FROM tb_worklog_ai_post_process_outbox WHERE worklog_id = ?
+                SELECT terminal_failed FROM tb_worklog_light_outbox WHERE worklog_id = ?
                 """, Boolean.class, worklog.getId())).isTrue();
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.FAILED);
         assertThat(worker.processOne(worklog.getId())).isFalse();
@@ -279,7 +474,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void deleted_source_cleans_suspended_registration_without_retry() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         doAnswer(invocation -> {
             TriggerWorklogLightIndexDto.Request request = invocation.getArgument(0);
             UUID execution = UUID.randomUUID();
@@ -287,6 +482,9 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
             lightIndexService.result(worklog.getId(), request.requestId(), execution, "FAILED", "INDEX_FAILED");
             return null;
         }).when(indexClient).requestIndex(any());
+        worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
+        makeDue(worklog.getId());
         worker.processOne(worklog.getId());
         Worklog latest = worklogRepository.findById(worklog.getId()).orElseThrow();
         latest.softDelete();
@@ -479,8 +677,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void request_replacement_after_process_before_finish_ignores_old_delivery_failure() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
-        doThrow(new IllegalStateException("A delivery failed")).when(indexClient).requestIndex(any());
+        enqueueRegistration(fixture, worklog);
         Claim claim = outboxRepository.claim(worklog.getId(), UUID.randomUUID()).getFirst();
         var failures = postProcessService.process(claim);
 
@@ -511,12 +708,13 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void obsolete_http_failure_does_not_fail_replacement_request() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         doAnswer(invocation -> {
             lightOutbox.enqueue(worklog.getId(), "REINDEX");
             throw new IllegalStateException("obsolete delivery failed");
         }).when(indexClient).requestIndex(any());
         assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
         assertThat(notificationCount(worklog.getId())).isZero();
         UUID execution = UUID.randomUUID();
@@ -533,8 +731,9 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
         UUID request = currentRequest(worklog.getId());
         UUID execution = UUID.randomUUID();
         lightIndexService.start(worklog.getId(), request, execution);
@@ -568,11 +767,12 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void successful_callback_before_lost_202_remains_successful() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         doAnswer(invocation -> {
             completeIndex(invocation.getArgument(0));
             throw new IllegalStateException("202 response lost");
         }).when(indexClient).requestIndex(any());
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         assertThat(worker.processOne(worklog.getId())).isTrue();
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
         assertThat(jobCount(worklog.getId())).isZero();
@@ -584,9 +784,10 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         UUID old = currentRequest(worklog.getId());
         worker.processOne(worklog.getId());
+        lightWorker.processOne(worklog.getId());
         lightOutbox.enqueue(worklog.getId(), "REINDEX");
         UUID latest = currentRequest(worklog.getId());
         assertThat(latest).isNotEqualTo(old);
@@ -605,7 +806,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void soft_deleted_source_still_allows_latest_delete_execution() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         worklog.softDelete();
         worklogRepository.saveAndFlush(worklog);
         lightOutbox.enqueue(worklog.getId(), "DELETE");
@@ -622,9 +823,10 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         UUID request = jdbcTemplate.queryForObject("SELECT light_index_request_id FROM tb_worklog WHERE worklog_id = ?", UUID.class, worklog.getId());
         assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
         assertThat(notificationCount(worklog.getId())).isZero();
         assertThat(hasCheckpoint(worklog.getId(), "LIGHT_INDEX")).isFalse();
@@ -647,7 +849,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
         org.mockito.Mockito.doNothing().when(indexClient).requestIndex(any());
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         UUID request = jdbcTemplate.queryForObject("SELECT light_index_request_id FROM tb_worklog WHERE worklog_id = ?", UUID.class, worklog.getId());
         UUID execution = UUID.randomUUID();
         assertThat(lightIndexService.start(worklog.getId(), request, execution)).isTrue();
@@ -666,23 +868,20 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void index_retry_skips_previously_accepted_pipeline() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         doThrow(new IllegalStateException("index unavailable")).doAnswer(invocation -> {
             completeIndex(invocation.getArgument(0)); return null;
-        })
-                .when(indexClient).requestIndex(any());
+        }).when(indexClient).requestIndex(any());
 
         assertThat(worker.processOne(worklog.getId())).isTrue();
-
-        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.FAILED);
-        assertThat(jobCount(worklog.getId())).isEqualTo(1);
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
+        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
         assertThat(hasCheckpoint(worklog.getId(), "WORKLOG_PIPELINE")).isTrue();
-        assertThat(hasCheckpoint(worklog.getId(), "LIGHT_INDEX")).isFalse();
-        assertThat(notificationCount(worklog.getId())).isEqualTo(1);
+        assertThat(notificationCount(worklog.getId())).isZero();
+        makeLightDue(worklog.getId());
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         makeDue(worklog.getId());
-
         assertThat(worker.processOne(worklog.getId())).isTrue();
-
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.COMPLETED);
         assertThat(jobCount(worklog.getId())).isZero();
         verify(pipelineClient, times(1)).requestPipeline(pipelineRequest(fixture, worklog));
@@ -692,28 +891,32 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     }
 
     @Test
-    @DisplayName("색인 복구 중 접수된 명시적 요약 재요청은 이전 작업 완료에 사라지지 않고 별도로 실행된다")
+    @DisplayName("색인 최종 실패 뒤 명시적 요약 재요청은 새 색인과 별도로 실행된다")
     void manual_summary_retry_survives_completion_of_existing_index_retry() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
-        doThrow(new IllegalStateException("index unavailable")).doAnswer(invocation -> {
+        enqueueRegistration(fixture, worklog);
+        doAnswer(invocation -> {
+            TriggerWorklogLightIndexDto.Request request = invocation.getArgument(0);
+            UUID execution = UUID.randomUUID();
+            assertThat(lightIndexService.start(worklog.getId(), request.requestId(), execution)).isTrue();
+            lightIndexService.result(worklog.getId(), request.requestId(), execution, "FAILED", "INDEX_FAILED");
+            return null;
+        }).doAnswer(invocation -> {
             completeIndex(invocation.getArgument(0)); return null;
-        })
-                .when(indexClient).requestIndex(any());
+        }).when(indexClient).requestIndex(any());
 
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         assertThat(worker.processOne(worklog.getId())).isTrue();
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.FAILED);
         assertThat(hasCheckpoint(worklog.getId(), "WORKLOG_PIPELINE")).isTrue();
-
         worklogService.retryAiSummary(new CustomUserPrincipal(
                 fixture.user().getId(), fixture.user().getEmail(), "MEMBER"), worklog.getId());
-
-        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
         assertThat(worker.processOne(worklog.getId())).isTrue();
         assertThat(jobCount(worklog.getId())).isEqualTo(1);
-        assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
-
+        assertThat(worker.processOne(worklog.getId())).isTrue();
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         assertThat(worker.processOne(worklog.getId())).isTrue();
 
         verify(pipelineClient, times(2)).requestPipeline(pipelineRequest(fixture, worklog));
@@ -726,20 +929,21 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void notification_failure_rolls_back_completion_without_repeating_remote_requests() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         doAnswer(invocation -> {
             invocation.callRealMethod();
             throw new IllegalStateException("notification transaction failed");
         }).doCallRealMethod().when(notificationService).createWorklogAiPostProcessResultNotification(
                 anyLong(), anyLong(), anyLong(), anyLong(), anyString(), anyBoolean(), anyList());
 
+        assertThat(lightWorker.processOne(worklog.getId())).isTrue();
         assertThat(worker.processOne(worklog.getId())).isTrue();
 
         assertThat(processingStatus(worklog.getId())).isEqualTo(AiProcessingStatus.PROCESSING);
         assertThat(notificationCount(worklog.getId())).isZero();
         assertThat(jobCount(worklog.getId())).isEqualTo(1);
         assertThat(hasCheckpoint(worklog.getId(), "WORKLOG_PIPELINE")).isTrue();
-        assertThat(hasCheckpoint(worklog.getId(), "LIGHT_INDEX")).isTrue();
+        assertThat(hasCheckpoint(worklog.getId(), "LIGHT_INDEX")).isFalse();
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT attempts = 1 AND claim_token IS NULL AND last_error = 'IllegalStateException'
                 FROM tb_worklog_ai_post_process_outbox WHERE worklog_id = ?
@@ -760,8 +964,8 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void deleted_source_cancels_job_without_remote_requests() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
+        enqueueRegistration(fixture, worklog);
         worklog.softDelete();
         worklogRepository.saveAndFlush(worklog);
 
@@ -778,7 +982,7 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
     void active_source_allows_current_owner_to_renew_lease() {
         Fixture fixture = seedFixture();
         Worklog worklog = saveProcessingWorklog(fixture);
-        outboxRepository.enqueue(event(fixture, worklog));
+        enqueueRegistration(fixture, worklog);
         List<Claim> claims = outboxRepository.claim(worklog.getId(), UUID.randomUUID());
         assertThat(claims).hasSize(1);
         Claim claim = claims.getFirst();
@@ -812,7 +1016,11 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
                 """, String.class, worklogId)).isEqualTo("업무 내용");
         verifyNoInteractions(fileSummaryClient, pipelineClient, indexClient);
 
-        assertThat(worker.processOne(null)).isTrue();
+        assertThat(lightJobCount(worklogId)).isEqualTo(1);
+        assertThat(worker.processOne(worklogId)).isTrue();
+        assertThat(processingStatus(worklogId)).isEqualTo(AiProcessingStatus.PROCESSING);
+        assertThat(lightWorker.processOne(worklogId)).isTrue();
+        assertThat(worker.processOne(worklogId)).isTrue();
 
         assertThat(processingStatus(worklogId)).isEqualTo(AiProcessingStatus.COMPLETED);
         assertThat(jobCount(worklogId)).isZero();
@@ -821,6 +1029,13 @@ class WorklogAiPostProcessExecutionIntegrationTest extends IntegrationTestSuppor
                 request.requestContent(), request.workContent(), fixture.user().getId(),
                 fixture.team().getId(), fixture.department().getId()));
         verify(indexClient).requestIndex(any());
+    }
+
+    /** 등록 이벤트와 같이 활성 일반 snapshot에만 최초 색인 의도를 기록한다. */
+    private void enqueueRegistration(Fixture fixture, Worklog worklog) {
+        if (outboxRepository.enqueue(event(fixture, worklog))) {
+            lightOutbox.enqueue(worklog.getId(), "INDEX");
+        }
     }
 
     /** 202보다 먼저 도착할 수 있는 실제 callback을 DB에 반영한다. */

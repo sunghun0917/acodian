@@ -2,7 +2,6 @@ package com.ibank.axwms.domain.worklog.service;
 
 import com.ibank.axwms.domain.worklog.dto.TriggerWorklogLightDeleteDto;
 import com.ibank.axwms.domain.worklog.dto.TriggerWorklogLightIndexDto;
-import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogLightIndexClient;
 import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository.Claim;
@@ -22,14 +21,10 @@ public class WorklogLightOutboxWorker {
 
     private final WorklogLightOutboxRepository repository;
     private final WorklogLightIndexClient client;
-    private final AiWorklogLightIndexProperties properties;
 
     /** 일정한 소량의 기한 도래 작업을 처리해 장애 복구와 재시도를 보장한다. */
     @Scheduled(fixedDelayString = "${ai.worklog-light-index.outbox-poll-delay-ms:5000}")
     public void poll() {
-        if (!properties.enabled()) {
-            return;
-        }
         for (int i = 0; i < 20; i++) {
             if (!processOne(null)) {
                 break;
@@ -39,27 +34,17 @@ public class WorklogLightOutboxWorker {
 
     /** 지정 ID 또는 가장 오래된 작업 하나를 선점해 AI에 전달한다. */
     public boolean processOne(Long worklogId) {
-        if (!properties.enabled()) {
-            return false;
-        }
         List<Claim> claimed = repository.claim(worklogId, UUID.randomUUID());
         if (claimed.isEmpty()) {
             return false;
         }
         Claim claim = claimed.getFirst();
         try {
-            if ("DELETE".equals(claim.operation())) {
-                if (!properties.deleteEnabled()) {
-                    repository.fail(claim, "AI Light 삭제 기능 비활성화");
-                    return true;
-                }
-                client.requestDelete(TriggerWorklogLightDeleteDto.Request.of(claim.worklogId(), claim.requestId()));
-            } else {
-                if (!properties.updateEnabled()) {
-                    repository.fail(claim, "AI Light 재색인 기능 비활성화");
-                    return true;
-                }
-                client.requestReindex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId(), claim.requestId()));
+            switch (claim.operation()) {
+                case "INDEX" -> client.requestIndex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId(), claim.requestId()));
+                case "REINDEX" -> client.requestReindex(TriggerWorklogLightIndexDto.Request.of(claim.worklogId(), claim.requestId()));
+                case "DELETE" -> client.requestDelete(TriggerWorklogLightDeleteDto.Request.of(claim.worklogId(), claim.requestId()));
+                default -> throw new IllegalStateException("Unknown Light operation: " + claim.operation());
             }
             log.info("Light index accepted worklogId={} requestId={} operation={} deliveryAttemptId={}",
                     claim.worklogId(), claim.requestId(), claim.operation(), claim.token());

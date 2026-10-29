@@ -313,14 +313,12 @@ public class WorklogService {
                               List<MultipartFile> newFiles) {
         Worklog worklog = getEditableWorklogOrThrow(principal, worklogId);
 
-        boolean updateIndexEnabled = worklogLightIndexProperties.enabled() && worklogLightIndexProperties.updateEnabled();
-        String oldTitle = updateIndexEnabled ? worklog.getTitle() : null;
-        String oldRequestContent = updateIndexEnabled ? worklog.getRequestContent() : null;
-        String oldWorkContent = updateIndexEnabled ? worklog.getWorkContent() : null;
-        Set<Long> oldTagIds = updateIndexEnabled ? worklogTagRepository.findByWorklogId(worklogId).stream()
-                .map(WorklogTag::getTagId).collect(Collectors.toSet()) : Set.of();
-        Set<Long> oldPredecessors = updateIndexEnabled
-                ? worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(worklogId) : Set.of();
+        String oldTitle = worklog.getTitle();
+        String oldRequestContent = worklog.getRequestContent();
+        String oldWorkContent = worklog.getWorkContent();
+        Set<Long> oldTagIds = worklogTagRepository.findByWorklogId(worklogId).stream()
+                .map(WorklogTag::getTagId).collect(Collectors.toSet());
+        Set<Long> oldPredecessors = worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(worklogId);
 
         LocalDate effectiveInstructionDate = request.instructionDate() != null ? request.instructionDate() : worklog.getInstructionDate();
         LocalDate effectiveDueDate = request.dueDate() != null ? request.dueDate() : worklog.getDueDate();
@@ -366,26 +364,23 @@ public class WorklogService {
 
         fileService.uploadWorklogFiles(worklogId, principal.userId(), newFiles);
 
-        if (updateIndexEnabled) {
-            worklogTagRepository.flush();
-            worklogDependencyRepository.flush();
-            boolean indexInputChanged = !Objects.equals(oldTitle, worklog.getTitle())
+        worklogTagRepository.flush();
+        worklogDependencyRepository.flush();
+        boolean indexInputChanged = !Objects.equals(oldTitle, worklog.getTitle())
                     || !Objects.equals(oldRequestContent, worklog.getRequestContent())
                     || !Objects.equals(oldWorkContent, worklog.getWorkContent())
                     || !oldTagIds.equals(worklogTagRepository.findByWorklogId(worklogId).stream()
                     .map(WorklogTag::getTagId).collect(Collectors.toSet()))
                     || !oldPredecessors.equals(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(worklogId));
-            if (indexInputChanged) {
-                eventPublisher.publishEvent(new WorklogLightIndexRequestedEvent(worklogId));
-            }
+        if (indexInputChanged) {
+            eventPublisher.publishEvent(new WorklogLightIndexRequestedEvent(worklogId));
         }
     }
 
     /** 작성자 본인의 업무만 소프트 삭제하고 커밋 뒤 AI 문서 삭제를 요청한다. */
     @Transactional
     public void deleteWorklog(CustomUserPrincipal principal, Long worklogId) {
-        if (!worklogLightIndexProperties.enabled() || !worklogLightIndexProperties.deleteEnabled()
-                || worklogLightIndexProperties.internalToken() == null
+        if (worklogLightIndexProperties.internalToken() == null
                 || worklogLightIndexProperties.internalToken().isBlank()) {
             throw new BusinessException(ErrorCode.WORKLOG_LIGHT_DELETE_UNAVAILABLE);
         }

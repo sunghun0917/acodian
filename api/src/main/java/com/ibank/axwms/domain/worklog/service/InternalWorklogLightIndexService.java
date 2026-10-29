@@ -8,7 +8,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** 실행 식별자로 결과 권위를 구분하고 최종 결과에 따라 수정·삭제 Outbox를 완료하거나 재전달한다. */
+/** 실행 식별자로 결과 권위를 구분하고 색인 Outbox를 완료하거나 재전달한다. */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -24,9 +24,10 @@ public class InternalWorklogLightIndexService {
                     light_index_error = NULL, light_index_completed_at = NULL
                 WHERE worklog_id = ? AND light_index_request_id = ?
                   AND light_index_status <> 'COMPLETED'
-                  AND (light_index_status <> 'FAILED' OR EXISTS (
+                  AND EXISTS (
                       SELECT 1 FROM tb_worklog_light_outbox o
-                      WHERE o.worklog_id = tb_worklog.worklog_id AND o.request_id = tb_worklog.light_index_request_id))
+                      WHERE o.worklog_id = tb_worklog.worklog_id AND o.request_id = tb_worklog.light_index_request_id
+                        AND NOT o.terminal_failed)
                   AND (light_index_execution_id IS DISTINCT FROM ? OR light_index_status = 'RUNNING')
                 """, executionId, worklogId, requestId, executionId);
         log.info("Light index start worklogId={} requestId={} executionId={} execute={}",
@@ -40,6 +41,8 @@ public class InternalWorklogLightIndexService {
         var current = jdbcTemplate.queryForList("""
                 SELECT light_index_status FROM tb_worklog
                 WHERE worklog_id = ? AND light_index_request_id = ? AND light_index_execution_id = ?
+                  AND EXISTS (SELECT 1 FROM tb_worklog_light_outbox o
+                      WHERE o.worklog_id = tb_worklog.worklog_id AND o.request_id = tb_worklog.light_index_request_id)
                 FOR UPDATE
                 """, String.class, worklogId, requestId, executionId);
         if (current.isEmpty()) {
@@ -51,6 +54,10 @@ public class InternalWorklogLightIndexService {
             }
             return;
         }
+        jdbcTemplate.queryForList("""
+                SELECT worklog_id FROM tb_worklog_ai_post_process_outbox
+                WHERE worklog_id = ? FOR UPDATE
+                """, Long.class, worklogId);
         jdbcTemplate.update("""
                 UPDATE tb_worklog SET light_index_status = ?, light_index_error = LEFT(?, 1000),
                     light_index_completed_at = CURRENT_TIMESTAMP WHERE worklog_id = ?
@@ -61,12 +68,9 @@ public class InternalWorklogLightIndexService {
             lightOutboxRepository.retryResult(worklogId, requestId, error);
         }
         jdbcTemplate.update("""
-                UPDATE tb_worklog_ai_post_process_outbox SET next_attempt_at = CURRENT_TIMESTAMP,
-                    light_accepted = true,
-                    completed_stages = CASE WHEN ? = 'COMPLETED' AND NOT ('LIGHT_INDEX' = ANY(completed_stages))
-                        THEN array_append(completed_stages, 'LIGHT_INDEX') ELSE completed_stages END
-                WHERE worklog_id = ? AND light_request_id = ?
-                """, status, worklogId, requestId);
+                UPDATE tb_worklog_ai_post_process_outbox SET next_attempt_at = CURRENT_TIMESTAMP
+                WHERE worklog_id = ?
+                """, worklogId);
         log.info("Light index result worklogId={} requestId={} executionId={} status={}", worklogId, requestId, executionId, status);
     }
 }

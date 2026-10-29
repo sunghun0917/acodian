@@ -22,9 +22,9 @@ class AxWmsApplicationTests extends IntegrationTestSupport {
 
         assertThat(sources).hasSize(1);
         var source = sources.getFirst();
-        assertThat(source.containsProperty("ai.worklog-light-index.enabled")).isTrue();
-        assertThat(source.containsProperty("ai.worklog-light-index.update-enabled")).isTrue();
-        assertThat(source.containsProperty("ai.worklog-light-index.delete-enabled")).isTrue();
+        assertThat(source.containsProperty("ai.worklog-light-index.enabled")).isFalse();
+        assertThat(source.containsProperty("ai.worklog-light-index.update-enabled")).isFalse();
+        assertThat(source.containsProperty("ai.worklog-light-index.delete-enabled")).isFalse();
         assertThat(source.containsProperty("ai.worklog-light-index.read-timeout")).isTrue();
         assertThat(source.containsProperty("ai.worklog-light-index.internal-token")).isTrue();
     }

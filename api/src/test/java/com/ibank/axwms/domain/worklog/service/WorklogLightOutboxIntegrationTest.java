@@ -2,18 +2,16 @@ package com.ibank.axwms.domain.worklog.service;
 
 import com.ibank.axwms.domain.worklog.dto.TriggerWorklogLightDeleteDto;
 import com.ibank.axwms.domain.worklog.dto.TriggerWorklogLightIndexDto;
-import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogLightIndexClient;
 import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository;
 import com.ibank.axwms.testsupport.IntegrationTestSupport;
-import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doNothing;
@@ -23,7 +21,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
-@TestPropertySource(properties = "ai.worklog-light-index.enabled=false")
 class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
 
     @Autowired
@@ -35,12 +32,14 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
     private final WorklogLightIndexClient client = mock(WorklogLightIndexClient.class);
     private WorklogLightOutboxWorker worker;
 
+    @MockitoBean
+    private WorklogLightOutboxWorker scheduledWorker;
+
     /** 스케줄러의 자동 실행과 경쟁하지 않고 실제 DB 선점과 후속 처리를 검증한다. */
     @BeforeEach
     void setUp() {
         jdbcTemplate.execute("TRUNCATE TABLE tb_worklog_light_outbox");
-        worker = new WorklogLightOutboxWorker(repository, client, new AiWorklogLightIndexProperties(
-                true, true, true, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2), "token"));
+        worker = new WorklogLightOutboxWorker(repository, client);
     }
 
     @Test
