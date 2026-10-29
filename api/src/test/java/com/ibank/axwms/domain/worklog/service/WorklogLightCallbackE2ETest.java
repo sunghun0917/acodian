@@ -48,9 +48,6 @@ import org.springframework.test.context.TestPropertySource;
         "ai.worklog-post-process.outbox-poll-delay-ms=3600000",
         "ai.worklog-light-index.outbox-poll-delay-ms=3600000",
         "ai.worklog-pipeline.enabled=false",
-        "ai.worklog-light-index.enabled=true",
-        "ai.worklog-light-index.update-enabled=true",
-        "ai.worklog-light-index.delete-enabled=true",
         "ai.worklog-light-index.base-url=http://127.0.0.1:1/ai",
         "ai.worklog-light-index.internal-token=callback-e2e-internal-token"
 })
@@ -93,6 +90,7 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
     void actual_python_callback_completes_registration() throws Exception {
         Fixture fixture = seedWorklog();
         registrationOutbox.enqueue(event(fixture));
+        mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
         UUID request = currentRequest(fixture.worklog().getId());
         UUID execution = UUID.randomUUID();
 
@@ -134,6 +132,7 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
         Fixture fixture = seedWorklog();
         Long id = fixture.worklog().getId();
         registrationOutbox.enqueue(event(fixture));
+        mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
         UUID request = currentRequest(id);
         UUID execution = UUID.randomUUID();
         callback(id, request, execution, "FAILED");
@@ -186,6 +185,7 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
         Long id = fixture.worklog().getId();
         if ("INDEX".equals(operation)) {
             registrationOutbox.enqueue(event(fixture));
+            mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
         } else {
             if ("DELETE".equals(operation)) {
                 fixture.worklog().softDelete();
@@ -217,6 +217,7 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
         Fixture fixture = seedWorklog();
         Long id = fixture.worklog().getId();
         registrationOutbox.enqueue(event(fixture));
+        mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
 
         String result = driver(id, currentRequest(id), UUID.randomUUID(), status, "pipeline-retry", INTERNAL_TOKEN, 200, "INDEX");
 

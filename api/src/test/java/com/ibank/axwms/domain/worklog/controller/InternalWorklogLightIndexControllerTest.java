@@ -68,7 +68,7 @@ class InternalWorklogLightIndexControllerTest {
     /** 실제 MVC 바인딩·검증·응답 봉투를 사용하고 외부 인프라만 생략한다. */
     private MockMvc mvc(String token) {
         return MockMvcBuilders.standaloneSetup(new InternalWorklogLightIndexController(service,
-                new AiWorklogLightIndexProperties(true, true, true, "http://ai/ai", Duration.ofSeconds(1), Duration.ofSeconds(1), token)))
+                new AiWorklogLightIndexProperties("http://ai/ai", Duration.ofSeconds(1), Duration.ofSeconds(1), token)))
                 .setControllerAdvice(new GlobalExceptionHandler(), new GlobalResponseAdvice()).build();
     }
 }

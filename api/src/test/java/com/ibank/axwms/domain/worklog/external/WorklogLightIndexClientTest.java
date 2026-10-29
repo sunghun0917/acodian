@@ -66,7 +66,7 @@ class WorklogLightIndexClientTest {
     void rejects_missing_token_before_network_call() {
         for (String token : new String[]{null, "", " "}) {
             for (String operation : new String[]{"index", "reindex", "delete"}) {
-                var client = new WorklogLightIndexClient(new AiWorklogLightIndexProperties(true, true, true,
+                var client = new WorklogLightIndexClient(new AiWorklogLightIndexProperties(
                         "http://localhost:1/ai", Duration.ofSeconds(1), Duration.ofSeconds(1), token));
                 assertThatThrownBy(() -> send(client, operation)).isInstanceOf(IllegalStateException.class);
             }
@@ -103,7 +103,7 @@ class WorklogLightIndexClientTest {
 
     /** 서버별 포트로 격리해 외부 AI 서버 없이 계약을 확인한다. */
     private WorklogLightIndexClient client(HttpServer server, String token) {
-        return new WorklogLightIndexClient(new AiWorklogLightIndexProperties(true, true, true,
+        return new WorklogLightIndexClient(new AiWorklogLightIndexProperties(
                 "http://localhost:" + server.getAddress().getPort() + "/ai", Duration.ofSeconds(1), Duration.ofSeconds(1), token));
     }
 

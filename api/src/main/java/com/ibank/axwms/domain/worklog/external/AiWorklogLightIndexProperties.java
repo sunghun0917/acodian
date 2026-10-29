@@ -9,9 +9,6 @@ import java.time.Duration;
  */
 @ConfigurationProperties(prefix = "ai.worklog-light-index")
 public record AiWorklogLightIndexProperties(
-        boolean enabled,
-        boolean updateEnabled,
-        boolean deleteEnabled,
         String baseUrl,
         Duration connectTimeout,
         Duration readTimeout,
@@ -22,6 +19,7 @@ public record AiWorklogLightIndexProperties(
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(300);
 
+    /** 연결 설정 누락 시 안전한 로컬 기본값을 적용한다. */
     public AiWorklogLightIndexProperties {
         baseUrl = normalizeBaseUrl(baseUrl);
         connectTimeout = connectTimeout == null ? DEFAULT_CONNECT_TIMEOUT : connectTimeout;

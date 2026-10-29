@@ -3,6 +3,7 @@ package com.ibank.axwms.domain.worklog.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -15,14 +16,12 @@ import com.ibank.axwms.domain.file.external.AiFileSummaryProperties;
 import com.ibank.axwms.domain.file.external.FileSummaryClient;
 import com.ibank.axwms.domain.file.service.FileService;
 import com.ibank.axwms.domain.notification.service.NotificationService;
-import com.ibank.axwms.domain.worklog.dto.TriggerWorklogLightIndexDto;
 import com.ibank.axwms.domain.worklog.dto.TriggerWorklogPipelineDto;
 import com.ibank.axwms.domain.worklog.event.WorklogAiPostProcessRequestedEvent;
-import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.AiWorklogPipelineProperties;
-import com.ibank.axwms.domain.worklog.external.WorklogLightIndexClient;
 import com.ibank.axwms.domain.worklog.external.WorklogPipelineClient;
 import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository.Claim;
 import com.ibank.axwms.global.error.BusinessException;
 import java.time.Duration;
@@ -56,7 +55,7 @@ class WorklogAiPostProcessServiceTest {
     private WorklogPipelineClient worklogPipelineClient;
 
     @Mock
-    private WorklogLightIndexClient worklogLightIndexClient;
+    private WorklogLightOutboxRepository lightOutboxRepository;
 
     @Mock
     private NotificationService notificationService;
@@ -70,9 +69,6 @@ class WorklogAiPostProcessServiceTest {
     private final AiWorklogPipelineProperties worklogPipelineProperties =
             new AiWorklogPipelineProperties(true, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2));
 
-    private final AiWorklogLightIndexProperties worklogLightIndexProperties =
-            new AiWorklogLightIndexProperties(true, false, false, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2), null);
-
     private WorklogAiPostProcessService service;
 
     @BeforeEach
@@ -82,12 +78,11 @@ class WorklogAiPostProcessServiceTest {
                 fileService,
                 fileSummaryProperties,
                 worklogPipelineClient,
-                worklogLightIndexClient,
                 worklogPipelineProperties,
-                worklogLightIndexProperties,
                 notificationService,
                 worklogAiProcessingStatusService,
-                outboxRepository
+                outboxRepository,
+                lightOutboxRepository
         );
         lenient().when(outboxRepository.isWorklogActive(501L)).thenReturn(true);
         lenient().when(outboxRepository.renewLease(any())).thenReturn(true);
@@ -95,7 +90,6 @@ class WorklogAiPostProcessServiceTest {
         lenient().when(outboxRepository.lockWorklog(501L)).thenReturn(Optional.of(false));
         lenient().when(outboxRepository.lockClaim(any())).thenReturn(true);
         lenient().when(fileService.isActiveWorklogFile(501L, 9001L)).thenReturn(true);
-        lenient().when(outboxRepository.pendingLightRequest(any())).thenReturn(Optional.of(new UUID(0, 1)));
         lenient().when(outboxRepository.lightState(any())).thenReturn("COMPLETED");
     }
 
@@ -104,7 +98,7 @@ class WorklogAiPostProcessServiceTest {
         when(outboxRepository.lightState(any())).thenReturn("PENDING");
         Claim claim = claim(eventWithoutFiles());
         service.finish(claim, service.process(claim));
-        verify(outboxRepository).awaitLightResult(claim);
+        verify(outboxRepository).awaitLightResult(claim, List.of());
         verify(outboxRepository, never()).checkpoint(claim, "LIGHT_INDEX");
         verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
         verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
@@ -112,7 +106,50 @@ class WorklogAiPostProcessServiceTest {
     }
 
     @Test
-    @DisplayName("세 AI 요청이 모두 dispatch 되면 완료 상태와 성공 알림을 생성한다")
+    @DisplayName("일반 요청이 실패해도 최신 색인이 진행 중이면 실패 알림을 보류한다")
+    void failed_general_request_waits_for_latest_index_before_notifying() {
+        when(outboxRepository.lightState(any())).thenReturn("RUNNING");
+        doThrow(new IllegalStateException("AI down")).when(worklogPipelineClient).requestPipeline(any());
+        Claim claim = claim(eventWithoutFiles());
+
+        service.finish(claim, service.process(claim));
+
+        verify(outboxRepository).awaitLightResult(claim, List.of("WORKLOG_PIPELINE"));
+        verify(worklogAiProcessingStatusService, never()).failAiProcessing(any());
+        verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
+                any(), any(), any(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("대기 중인 수동 재요청을 승격하면 새로운 최초 색인을 Light Outbox에 기록한다")
+    void queued_manual_retry_enqueues_index_on_activation() {
+        when(outboxRepository.activateQueuedRetry(any())).thenReturn(true);
+        Claim claim = claim(eventWithoutFiles());
+
+        service.finish(claim, new WorklogAiPostProcessService.ProcessResult(List.of()));
+
+        verify(lightOutboxRepository).enqueue(501L, "INDEX");
+        verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
+                any(), any(), any(), any(), any(), anyBoolean(), any());
+    }
+
+    @Test
+    @DisplayName("색인 대기 중 보관한 일반 실패는 이후 접수 성공에도 첫 실패 알림으로 집계한다")
+    void saved_failure_is_reported_after_index_finishes_even_if_general_retry_succeeds() {
+        Claim claim = claim(eventWithoutFiles());
+        when(outboxRepository.pendingFailedStages(claim)).thenReturn(List.of("WORKLOG_PIPELINE"));
+
+        service.finish(claim, service.process(claim));
+
+        verify(worklogAiProcessingStatusService).failAiProcessing(501L);
+        verify(notificationService).createWorklogAiPostProcessResultNotification(
+                101L, 9L, 21L, 501L, WORKLOG_TITLE, false, List.of("WORKLOG_PIPELINE"));
+        verify(outboxRepository).clearPendingFailedStages(claim);
+        verify(outboxRepository).fail(claim, "WORKLOG_PIPELINE");
+    }
+
+    @Test
+    @DisplayName("일반 AI 요청이 접수되고 색인이 완료되면 성공 알림을 생성한다")
     void process_creates_success_notification_when_all_requests_succeed() {
         WorklogAiPostProcessRequestedEvent event = eventWithFiles();
 
@@ -121,17 +158,14 @@ class WorklogAiPostProcessServiceTest {
         ArgumentCaptor<TriggerFileSummaryDto.Request> fileCaptor = ArgumentCaptor.forClass(TriggerFileSummaryDto.Request.class);
         verify(fileService).startWorklogFileAiSummaryProcessing(9001L);
         ArgumentCaptor<TriggerWorklogPipelineDto.Request> pipelineCaptor = ArgumentCaptor.forClass(TriggerWorklogPipelineDto.Request.class);
-        ArgumentCaptor<TriggerWorklogLightIndexDto.Request> indexCaptor = ArgumentCaptor.forClass(TriggerWorklogLightIndexDto.Request.class);
 
         verify(fileSummaryClient).requestSummary(fileCaptor.capture());
         verify(worklogPipelineClient).requestPipeline(pipelineCaptor.capture());
-        verify(worklogLightIndexClient).requestIndex(indexCaptor.capture());
 
         assertThat(fileCaptor.getValue().fileId()).isEqualTo(9001L);
         assertThat(fileCaptor.getValue().worklogId()).isEqualTo(501L);
         assertThat(pipelineCaptor.getValue().worklogId()).isEqualTo(501L);
         assertThat(pipelineCaptor.getValue().departmentId()).isEqualTo(9L);
-        assertThat(indexCaptor.getValue().worklogIds()).containsExactly(501L);
 
         verify(worklogAiProcessingStatusService).completeAiProcessing(501L);
         verify(worklogAiProcessingStatusService, never()).startAiProcessing(any());
@@ -170,7 +204,6 @@ class WorklogAiPostProcessServiceTest {
                 failedStagesCaptor.capture()
         );
         assertThat(failedStagesCaptor.getValue()).containsExactly("WORKLOG_PIPELINE");
-        verify(worklogLightIndexClient).requestIndex(any());
         verify(outboxRepository).fail(any(), eq("WORKLOG_PIPELINE"));
         verify(outboxRepository, never()).complete(any());
     }
@@ -184,7 +217,6 @@ class WorklogAiPostProcessServiceTest {
 
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(worklogPipelineClient).requestPipeline(any());
-        verify(worklogLightIndexClient).requestIndex(any());
         verify(worklogAiProcessingStatusService).completeAiProcessing(501L);
         verify(worklogAiProcessingStatusService, never()).startAiProcessing(any());
         verify(worklogAiProcessingStatusService, never()).failAiProcessing(any());
@@ -208,12 +240,11 @@ class WorklogAiPostProcessServiceTest {
                 fileService,
                 new AiFileSummaryProperties(false, "http://ai.test/ai", Duration.ofSeconds(1), Duration.ofSeconds(2)),
                 worklogPipelineClient,
-                worklogLightIndexClient,
                 worklogPipelineProperties,
-                worklogLightIndexProperties,
                 notificationService,
                 worklogAiProcessingStatusService,
-                outboxRepository
+                outboxRepository,
+                lightOutboxRepository
         );
 
         processAndFinish(disabledService, eventWithFiles());
@@ -235,7 +266,7 @@ class WorklogAiPostProcessServiceTest {
     }
 
     @Test
-    @DisplayName("파일과 파이프라인이 이미 접수됐으면 실패한 색인만 재시도한다")
+    @DisplayName("파일과 파이프라인이 이미 접수됐으면 일반 AI 요청을 중복 발행하지 않는다")
     void process_resumes_only_unfinished_stages() {
         Claim claim = new Claim(501L, eventWithFiles(), Set.of("FILE_SUMMARY(9001)", "WORKLOG_PIPELINE"), 1, UUID.randomUUID());
 
@@ -243,8 +274,6 @@ class WorklogAiPostProcessServiceTest {
 
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(worklogPipelineClient, never()).requestPipeline(any());
-        verify(worklogLightIndexClient).requestIndex(any());
-        verify(outboxRepository).acceptLightRequest(claim, new UUID(0, 1));
         verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
     }
 
@@ -258,7 +287,6 @@ class WorklogAiPostProcessServiceTest {
 
         verify(fileSummaryClient).requestSummary(any());
         verify(worklogPipelineClient, never()).requestPipeline(any());
-        verify(worklogLightIndexClient, never()).requestIndex(any());
     }
 
     @Test
@@ -271,7 +299,6 @@ class WorklogAiPostProcessServiceTest {
 
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(worklogPipelineClient, never()).requestPipeline(any());
-        verify(worklogLightIndexClient, never()).requestIndex(any());
         verify(outboxRepository).complete(any());
         verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
         verify(notificationService, never()).createWorklogAiPostProcessResultNotification(
@@ -288,7 +315,6 @@ class WorklogAiPostProcessServiceTest {
         verify(fileSummaryClient, never()).requestSummary(any());
         verify(outboxRepository).checkpoint(any(), eq("FILE_SUMMARY(9001)"));
         verify(worklogPipelineClient).requestPipeline(any());
-        verify(worklogLightIndexClient).requestIndex(any());
     }
 
     @Test
@@ -296,7 +322,7 @@ class WorklogAiPostProcessServiceTest {
     void finish_ignores_stale_claim() {
         when(outboxRepository.lockClaim(any())).thenReturn(false);
 
-        service.finish(claim(eventWithFiles()), new WorklogAiPostProcessService.ProcessResult(List.of(), null));
+        service.finish(claim(eventWithFiles()), new WorklogAiPostProcessService.ProcessResult(List.of()));
 
         verify(outboxRepository, never()).complete(any());
         verify(worklogAiProcessingStatusService, never()).completeAiProcessing(any());
@@ -334,7 +360,7 @@ class WorklogAiPostProcessServiceTest {
         );
     }
 
-    /** 파일 없는 등록도 본문 파이프라인과 색인을 요청한다. */
+    /** 파일 없는 등록도 본문 파이프라인을 요청한다. */
     private static WorklogAiPostProcessRequestedEvent eventWithoutFiles() {
         return new WorklogAiPostProcessRequestedEvent(
                 501L,

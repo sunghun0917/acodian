@@ -42,9 +42,13 @@ class WorklogAiPostProcessOutboxIntegrationTest extends IntegrationTestSupport {
     @MockitoBean
     private WorklogAiPostProcessService postProcessService;
 
+    @MockitoBean
+    private WorklogLightOutboxWorker scheduledLightWorker;
+
     @BeforeEach
     void clearOutbox() {
         jdbcTemplate.execute("TRUNCATE TABLE tb_worklog_ai_post_process_outbox");
+        jdbcTemplate.execute("TRUNCATE TABLE tb_worklog_light_outbox");
     }
 
     @Test
@@ -65,6 +69,9 @@ class WorklogAiPostProcessOutboxIntegrationTest extends IntegrationTestSupport {
                 SELECT payload -> 'files' -> 0 ->> 'fileId'
                 FROM tb_worklog_ai_post_process_outbox WHERE worklog_id = 501
                 """, String.class)).isEqualTo("9001");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT operation FROM tb_worklog_light_outbox WHERE worklog_id = 501
+                """, String.class)).isEqualTo("INDEX");
         verifyNoInteractions(postProcessService);
     }
 
@@ -77,6 +84,7 @@ class WorklogAiPostProcessOutboxIntegrationTest extends IntegrationTestSupport {
         });
 
         assertThat(jobCount()).isZero();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox", Integer.class)).isZero();
         verifyNoInteractions(postProcessService);
     }
 

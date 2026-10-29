@@ -102,8 +102,8 @@ class WorklogServiceTest {
     private static final LocalDate DUE_DATE = LocalDate.of(2026, 4, 25);
 
     @Test
-    @DisplayName("AI 삭제가 준비되지 않으면 DB 삭제와 이벤트를 모두 차단한다")
-    void deleteWorklog_fails_closed_when_ai_delete_disabled() {
+    @DisplayName("내부 토큰이 없으면 DB 삭제와 이벤트를 모두 차단한다")
+    void deleteWorklog_fails_closed_when_internal_token_missing() {
         assertThatThrownBy(() -> worklogService.deleteWorklog(principal(), WORKLOG_ID))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode").isEqualTo(ErrorCode.WORKLOG_LIGHT_DELETE_UNAVAILABLE);
@@ -113,8 +113,6 @@ class WorklogServiceTest {
     @Test
     @DisplayName("작성자 업무를 소프트 삭제하고 AI 삭제 이벤트를 발행한다")
     void deleteWorklog_soft_deletes_and_publishes_event() {
-        given(worklogLightIndexProperties.enabled()).willReturn(true);
-        given(worklogLightIndexProperties.deleteEnabled()).willReturn(true);
         given(worklogLightIndexProperties.internalToken()).willReturn("test-token");
         Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
@@ -128,8 +126,6 @@ class WorklogServiceTest {
     @Test
     @DisplayName("다른 작성자의 업무 삭제는 거부하고 이벤트를 발행하지 않는다")
     void deleteWorklog_rejects_non_author() {
-        given(worklogLightIndexProperties.enabled()).willReturn(true);
-        given(worklogLightIndexProperties.deleteEnabled()).willReturn(true);
         given(worklogLightIndexProperties.internalToken()).willReturn("test-token");
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(savedWorklog(WorklogStatus.IN_PROGRESS)));
 
@@ -503,10 +499,8 @@ class WorklogServiceTest {
     }
 
     @Test
-    @DisplayName("수정 인덱싱 게이트가 켜진 경우 본문 변경만 재색인 이벤트를 발행한다")
+    @DisplayName("색인 대상 본문 변경은 재색인 이벤트를 발행한다")
     void updateWorklog_requests_index_only_when_index_input_changes() {
-        given(worklogLightIndexProperties.enabled()).willReturn(true);
-        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
         Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
         given(worklogTagRepository.findByWorklogId(WORKLOG_ID)).willReturn(List.of());
@@ -520,10 +514,8 @@ class WorklogServiceTest {
     }
 
     @Test
-    @DisplayName("수정 인덱싱 게이트가 켜져도 색인 입력 외 수정은 재색인하지 않는다")
+    @DisplayName("색인 입력 외 수정은 재색인하지 않는다")
     void updateWorklog_skips_index_when_only_unrelated_field_changes() {
-        given(worklogLightIndexProperties.enabled()).willReturn(true);
-        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
         Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
         given(worklogTagRepository.findByWorklogId(WORKLOG_ID)).willReturn(List.of());
@@ -539,8 +531,6 @@ class WorklogServiceTest {
     @Test
     @DisplayName("수정 전후 선행 업무 ID가 달라지면 본문이 그대로여도 재색인한다")
     void updateWorklog_requests_index_when_predecessors_change() {
-        given(worklogLightIndexProperties.enabled()).willReturn(true);
-        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(savedWorklog(WorklogStatus.IN_PROGRESS)));
         given(worklogTagRepository.findByWorklogId(WORKLOG_ID)).willReturn(List.of());
         given(worklogDependencyRepository.findDependsOnWorklogIdsByWorklogId(WORKLOG_ID))
@@ -556,8 +546,6 @@ class WorklogServiceTest {
     @Test
     @DisplayName("태그 이름이 같아도 연결 ID가 바뀌면 재색인한다")
     void updateWorklog_requests_index_when_tag_id_changes() {
-        given(worklogLightIndexProperties.enabled()).willReturn(true);
-        given(worklogLightIndexProperties.updateEnabled()).willReturn(true);
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(savedWorklog(WorklogStatus.IN_PROGRESS)));
         given(worklogTagRepository.findByWorklogId(WORKLOG_ID))
                 .willReturn(List.of(WorklogTag.create(WORKLOG_ID, 1L)), List.of(WorklogTag.create(WORKLOG_ID, 2L)));
