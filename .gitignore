@@ -40,6 +40,7 @@ Thumbs.db
 *.swp
 
 # Common workspace caches / build outputs
+/.ua/
 **/graphify-out/
 **/.gradle/
 **/build/
