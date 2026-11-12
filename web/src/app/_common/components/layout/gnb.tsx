@@ -43,7 +43,7 @@ export default function Gnb() {
       isRead: notification.isRead,
       teamName: getNotificationCenterTeamName(notification, teamNameById),
       createdAt: notification.createdAt,
-      href: resolveNotificationDeepLink(notification),
+      href: resolveNotificationDeepLink(notification) ?? "/notification",
     }));
 
   useEffect(() => {

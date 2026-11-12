@@ -43,7 +43,7 @@ export default function NotificationPage() {
   const [departmentId, setDepartmentId] = useState(ALL_FILTER_VALUE);
   const [teamId, setTeamId] = useState(ALL_FILTER_VALUE);
   const [page, setPage] = useState(1);
-  const { markAllRead, markRead, isMarkingAllRead } = useNotificationMutation();
+  const { markAllRead, markRead, isMarkingAllRead, retryAiTask, isRetryingAiTask, retryAiTaskError } = useNotificationMutation();
 
   const selectedDepartmentId = parseFilterNumber(departmentId);
   const selectedTeamId = parseFilterNumber(teamId);
@@ -306,7 +306,10 @@ export default function NotificationPage() {
 
         {!isLoading && !error ? (
           <>
-            <NotificationList notifications={notifications} onMarkRead={markRead} />
+            <>
+              {retryAiTaskError ? <p role="alert" className="text-sm text-destructive">재시도 요청에 실패했습니다. 작업 상태와 권한을 확인해 주세요.</p> : null}
+              <NotificationList notifications={notifications} onMarkRead={markRead} onRetry={retryAiTask} isRetrying={isRetryingAiTask} />
+            </>
             <Pagination
               page={notificationPage?.page ?? page}
               totalPages={notificationPage?.totalPages ?? 1}
