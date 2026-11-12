@@ -254,7 +254,7 @@ Factual F1 역시 아래 사례처럼 채점 오류·기준답변의 정보량�
 - [실행 계약·입력 해시](contract.json)
 - [원본 사전 해시](baseline-integrity.json) · [실험 후 무결성 확인](integrity-after.json)
 - [실행 코드](../run_ragas_ablation.py)
-- [개선 계획](../../../../.omx/plans/rag-query-context-improvement.md)
+- 개선 계획: `.omx/plans/rag-query-context-improvement.md` (당시 기록, 현재 파일 없음)
 
 주의: 실행 코드의 --report-only는 자동 집계용 초안을 생성하므로 이 해석·사례 포함 최종 보고서를 덮어쓸 수 있다.
 

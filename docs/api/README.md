@@ -22,3 +22,5 @@ Spring Boot API의 설계 규칙, 명세, 검증 기록을 관리한다. 코드 
 - Outbox 반복 측정 원본: [CSV](report/worklog-outbox-5x-timing-2026-10-18.csv) · [JSON](report/worklog-outbox-5x-timing-2026-10-18.json)
 
 보고서는 검증 당시의 기록이며 최신 명세·규칙을 대체하지 않는다. [전체 문서 안내](../README.md)
+
+- [AI 작업·알림·수동 재시도 현재 흐름](report/ai-task-manual-retry-current-flow-2026-11-07.md)

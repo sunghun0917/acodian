@@ -201,12 +201,10 @@ domain/organization/
 ```text
 domain/worklog/
 ├── controller/
-│   ├── WorklogController
-│   └── InternalWorklogAiCallbackController
+│   └── WorklogController
 ├── service/
 │   ├── WorklogService
-│   ├── WorklogStatusService
-│   └── InternalWorklogAiCallbackService
+│   └── WorklogStatusService
 ├── repository/
 │   ├── WorklogRepository
 │   ├── WorklogStatusHistoryRepository
@@ -228,11 +226,9 @@ domain/worklog/
 ```text
 domain/file/
 ├── controller/
-│   ├── FileController
-│   └── InternalFileAiCallbackController
+│   └── FileController
 ├── service/
-│   ├── FileService
-│   └── InternalFileAiCallbackService
+│   └── FileService
 ├── repository/
 │   └── FileRepository
 ├── dto/

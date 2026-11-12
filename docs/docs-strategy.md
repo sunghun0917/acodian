@@ -23,7 +23,7 @@ docs/
 │   ├── specs/               # 작업별 설계서
 │   └── plans/               # 작업별 구현 계획
 ├── images/                  # 공용 이미지
-├── archive/                 # 현재 기술 스택의 기준이 아닌 과거 문서
+├── archive/                 # 현재 구현의 기준이 아닌 과거 문서
 ├── docs-strategy.md         # 이 문서
 ├── skills-reference.md      # 스킬 빠른 참조
 └── guidance-schema.md       # OMX가 참조하는 스키마 계약 (경로 유지)
