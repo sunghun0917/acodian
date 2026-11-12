@@ -34,3 +34,5 @@ FastAPI·LightRAG의 설계, 실행 가이드, 평가 자료를 관리한다. �
 - [업무일지 RAG 캐시·재색인 보고서](report/worklog-rag-cache-and-reindex-report.md)
 
 보고서는 측정 당시의 기록이다. 작업별 설계·구현 계획은 [superpowers/](../superpowers/)에 보관한다. [전체 문서 안내](../README.md)
+
+- [AI 작업·Light 색인 단순화 결과와 현재 한계](report/ai-task-simplification-2026-11-12.md)

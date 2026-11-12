@@ -567,33 +567,6 @@
       <td><code>domain.worklog.entity.WorklogStatusHistory</code>, <code>domain.worklog.repository.WorklogStatusHistoryRepository</code>, <code>domain.worklog.repository.jooq.WorklogStatusHistoryJooqRepository</code></td>
       <td>이력 조회 ownership은 status 서비스에 둔다.</td>
     </tr>
-    <tr>
-      <td><code>PATCH /api/worklogs/{id}/summary</code></td>
-      <td><code>Documented</code></td>
-      <td>AI가 생성한 업무 요약을 원장 DB에 반영한다.</td>
-      <td><code>domain.worklog.controller.InternalWorklogAiCallbackController</code></td>
-      <td><code>domain.worklog.service.InternalWorklogAiCallbackService</code></td>
-      <td><code>domain.worklog.entity.Worklog</code>, <code>domain.worklog.repository.WorklogRepository</code></td>
-      <td>현행 코드 기준 internal callback controller base path는 <code>/api/internal/worklog</code> 이지만, endpoint/status 표기는 <code>api-design</code> 상세 본문 계약(<code>/api/{domain}/{id}/{action}</code>)을 우선 따른다.</td>
-    </tr>
-    <tr>
-      <td><code>PUT /api/worklogs/{id}/tags</code></td>
-      <td><code>Documented</code></td>
-      <td>AI가 생성/정규화한 태그 연결을 업무일지에 반영한다.</td>
-      <td><code>domain.worklog.controller.InternalWorklogAiCallbackController</code></td>
-      <td><code>domain.worklog.service.InternalWorklogAiCallbackService</code></td>
-      <td><code>domain.worklog.entity.WorklogTag</code>, <code>domain.worklog.repository.WorklogTagRepository</code>, <code>domain.worklog.repository.jooq.WorklogTagJooqRepository</code></td>
-      <td>현행 코드 기준 internal callback controller base path는 <code>/api/internal/worklog</code> 이지만, endpoint/status 표기는 <code>api-design</code> 상세 본문 계약(<code>/api/{domain}/{id}/{action}</code>)을 우선 따른다.</td>
-    </tr>
-    <tr>
-      <td><code>PATCH /api/worklogs/{id}/ai-status</code></td>
-      <td><code>Documented</code></td>
-      <td>업무일지 AI 처리 진행 상태를 반영한다.</td>
-      <td><code>domain.worklog.controller.InternalWorklogAiCallbackController</code></td>
-      <td><code>domain.worklog.service.InternalWorklogAiCallbackService</code></td>
-      <td><code>domain.worklog.entity.Worklog</code>, <code>domain.worklog.repository.WorklogRepository</code></td>
-      <td>현행 코드 기준 internal callback controller base path는 <code>/api/internal/worklog</code> 이지만, endpoint/status 표기는 <code>api-design</code> 상세 본문 계약(<code>/api/{domain}/{id}/{action}</code>)을 우선 따른다.</td>
-    </tr>
   </tbody>
 </table>
 </div>
@@ -659,24 +632,6 @@
       <td><code>domain.file.service.FileService</code></td>
       <td><code>domain.file.entity.File</code>, <code>domain.file.repository.FileRepository</code></td>
       <td>실제 저장소 정리는 비동기 후속 처리로 분리할 수 있다.</td>
-    </tr>
-    <tr>
-      <td><code>PUT /api/files/{id}/summary</code></td>
-      <td><code>Inferred-required</code></td>
-      <td>AI가 생성한 파일 요약을 파일 메타데이터에 반영한다.</td>
-      <td><code>domain.file.controller.InternalFileAiCallbackController</code></td>
-      <td><code>domain.file.service.InternalFileAiCallbackService</code></td>
-      <td><code>domain.file.entity.File</code>, <code>domain.file.repository.FileRepository</code></td>
-      <td>현행 코드 기준 internal callback controller base path는 <code>/api/internal/files</code> 이지만, endpoint/status 표기는 <code>api-design</code> 상세 본문 계약(<code>/api/{domain}/{id}/{action}</code>)을 우선 따른다.</td>
-    </tr>
-    <tr>
-      <td><code>PATCH /api/files/{id}/ai-status</code></td>
-      <td><code>Inferred-required</code></td>
-      <td>파일 AI 처리 진행 상태를 반영한다.</td>
-      <td><code>domain.file.controller.InternalFileAiCallbackController</code></td>
-      <td><code>domain.file.service.InternalFileAiCallbackService</code></td>
-      <td><code>domain.file.entity.File</code>, <code>domain.file.repository.FileRepository</code></td>
-      <td>현행 코드 기준 internal callback controller base path는 <code>/api/internal/files</code> 이지만, endpoint/status 표기는 <code>api-design</code> 상세 본문 계약(<code>/api/{domain}/{id}/{action}</code>)을 우선 따른다.</td>
     </tr>
   </tbody>
 </table>
