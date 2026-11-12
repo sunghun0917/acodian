@@ -1,12 +1,8 @@
 import asyncio
-import logging
-
-from app.client.worklog_client import WorklogClient
+from app.service.ai_task_executor import execute_ai_task
 from app.service.summary_service import SummaryService
 from app.task.celery_app import celery_app
-from app.task.retry_policy import retry_ai_task
-
-logger = logging.getLogger(__name__)
+from app.task.task_identity import validate_task_identity
 
 
 @celery_app.task(name="worklog.summary", bind=True)
@@ -15,50 +11,15 @@ def generate_worklog_summary(
     worklog_id: int,
     request_content: str | None,
     work_content: str,
+    metadata: dict | None = None,
 ) -> dict[str, int | str]:
-    try:
-        return asyncio.run(
-            _generate_worklog_summary(
-                worklog_id=worklog_id,
-                request_content=request_content,
-                work_content=work_content,
-            )
-        )
-    except Exception as exc:
-        retry_ai_task(self, exc, task_name="worklog.summary", target_id=worklog_id)
-        logger.exception("Failed to run worklog AI pipeline. worklog_id=%s", worklog_id)
-        asyncio.run(_mark_worklog_summary_failed(worklog_id))
-        raise
+    validate_task_identity(metadata, "SUMMARY", worklog_id)
+    return asyncio.run(execute_ai_task(
+        worklog_id, metadata, lambda: _generate_identified_summary(request_content, work_content),
+    ))
 
 
-async def _generate_worklog_summary(
-        worklog_id: int,
-        request_content: str | None,
-        work_content: str,
-) -> dict[str, int | str]:
-    summary = await SummaryService().generate_summary(
-        request_content=request_content,
-        work_content=work_content,
-    )
-
-    async with WorklogClient() as worklog_client:
-        await worklog_client.update_ai_result(
-            worklog_id=worklog_id,
-            ai_summary=summary,
-            ai_processing_status="COMPLETED",
-        )
-
-    return {
-        "worklog_id": worklog_id,
-        "summary": summary,
-        "status": "COMPLETED",
-    }
-
-
-async def _mark_worklog_summary_failed(worklog_id: int) -> None:
-    async with WorklogClient() as worklog_client:
-        await worklog_client.update_ai_result(
-            worklog_id=worklog_id,
-            ai_summary="",
-            ai_processing_status="FAILED",
-        )
+async def _generate_identified_summary(request_content: str | None, work_content: str) -> dict:
+    """식별된 작업은 결과 반영을 권한 검증을 수행하는 콜백에만 맡긴다."""
+    summary = await SummaryService().generate_summary(request_content=request_content, work_content=work_content)
+    return {"aiSummary": summary}

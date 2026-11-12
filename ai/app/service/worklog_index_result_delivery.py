@@ -1,13 +1,13 @@
-"""AI 결과 보관함의 콜백만 재전송하며 업무 DB는 Spring만 변경한다."""
+"""보관한 색인 결과는 성공 응답을 받을 때까지 재전송한다."""
 
 import asyncio
 import logging
 
+import httpx
+
 from app.client.worklog_index_client import WorklogIndexClient
 from app.store.worklog_index_result_store import (
-    PendingWorklogIndexResult,
-    acknowledge_light_index_result,
-    list_pending_light_index_results,
+    PendingWorklogIndexResult, list_pending_light_index_results, acknowledge_light_index_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ RESULT_DELIVERY_TIMEOUT_SECONDS = 10
 
 
 async def report_stored_result(record: PendingWorklogIndexResult, client: WorklogIndexClient) -> bool:
-    """콜백 실패·취소 시 보관 기록을 남겨 다음 재전송에서 사용한다."""
+    """전달 실패는 AI 재실행으로 바꾸지 않고 결과 파일을 그대로 남긴다."""
     try:
         await asyncio.wait_for(client.report_result(
             worklog_id=record.worklog_id, request_id=record.request_id,
@@ -25,13 +25,16 @@ async def report_stored_result(record: PendingWorklogIndexResult, client: Worklo
         await acknowledge_light_index_result(record)
         return True
     except Exception as exc:
-        logger.warning("Index callback retained for retry: worklogId=%s requestId=%s executionId=%s errorType=%s",
-                       record.worklog_id, record.request_id, record.execution_id, type(exc).__name__)
+        if isinstance(exc, httpx.HTTPStatusError) and 400 <= exc.response.status_code < 500 and exc.response.status_code not in (408, 429):
+            await acknowledge_light_index_result(record)
+            logger.warning("Index callback rejected: worklogId=%s status=%s", record.worklog_id, exc.response.status_code)
+            return False
+        logger.warning("Index callback retained: worklogId=%s errorType=%s", record.worklog_id, type(exc).__name__)
         return False
 
 
 async def deliver_pending_results_once(after: str = "") -> str:
-    """실패 기록 다음의 정상 결과도 처리하도록 배치 커서를 전진시킨다."""
+    """실패·손상 파일이 뒤쪽 정상 결과 전달을 막지 않도록 커서를 이동한다."""
     records, cursor = await list_pending_light_index_results(after)
     if records:
         async with WorklogIndexClient() as client:

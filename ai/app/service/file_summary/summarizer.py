@@ -14,6 +14,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.client.gemini_client import GeminiClient
+from app.config.settings import settings
 from app.service.file_summary.hwp_extractor import HwpContent
 from app.service.file_summary.office_extractor import OfficeContent
 from app.service.file_summary.svg_extractor import SvgInspection
@@ -85,16 +86,25 @@ so briefly in Korean. Do not invent content.
 """
 
 
+class FILE_TOO_LARGE_FOR_INLINE(ValueError):
+    """Gemini inline 요청 상한을 초과해 재시도할 수 없다."""
+
+
+def _inline_part(path: Path, mime_type: str) -> types.Part:
+    """예약 전 크기를 제한해 초과 파일이 공급자 예산을 소비하지 않게 한다."""
+    with path.open("rb") as stream:
+        data = stream.read(settings.gemini_inline_max_bytes + 1)
+    if len(data) > settings.gemini_inline_max_bytes:
+        raise FILE_TOO_LARGE_FOR_INLINE("FILE_TOO_LARGE_FOR_INLINE")
+    return types.Part.from_bytes(data=data, mime_type=mime_type)
+
+
 async def summarize_pdf(client: GeminiClient, path: Path) -> str:
-    uploaded = await client.upload_file(path, mime_type="application/pdf")
-    try:
-        payload = await client.generate_structured(
-            contents=[uploaded, "Summarize the attached document."],
-            schema=SummaryPayload,
-            instruction=DOCUMENT_INSTRUCTION,
-        )
-    finally:
-        await client.delete_file(uploaded)
+    payload = await client.generate_structured(
+        contents=[_inline_part(path, "application/pdf"), "Summarize the attached document."],
+        schema=SummaryPayload,
+        instruction=DOCUMENT_INSTRUCTION,
+    )
     return payload.summary
 
 
@@ -154,15 +164,11 @@ async def summarize_image(client: GeminiClient, path: Path) -> tuple[str, str]:
     """이미지 OCR + 설명. 콜백 단계에서 한 컬럼으로 합쳐쓴다."""
 
     mime = _image_mime(path)
-    uploaded = await client.upload_file(path, mime_type=mime)
-    try:
-        payload = await client.generate_structured(
-            contents=[uploaded, "Analyze the attached image."],
-            schema=ImagePayload,
-            instruction=IMAGE_INSTRUCTION,
-        )
-    finally:
-        await client.delete_file(uploaded)
+    payload = await client.generate_structured(
+        contents=[_inline_part(path, mime), "Analyze the attached image."],
+        schema=ImagePayload,
+        instruction=IMAGE_INSTRUCTION,
+    )
     return payload.description, payload.ocr_text
 
 

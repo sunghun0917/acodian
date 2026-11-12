@@ -20,17 +20,6 @@ class FakeTaggingClient:
             MetaTag(tagId=2, tagName="MCP 개발", description="MCP 기능 개발 업무", usageCount=2),
         ]
 
-    async def apply_worklog_ai_tags(
-        self,
-        worklog_id: int,
-        existing_tag_ids: list[int],
-        new_tags: list[NewTag],
-    ) -> None:
-        assert worklog_id == 10
-        assert existing_tag_ids == [1]
-        assert [tag.tag_name for tag in new_tags] == ["배치자동화"]
-        self.created_request = (worklog_id, existing_tag_ids, new_tags)
-
 
 class FakeTaggingService:
     async def generate_tags(
@@ -51,29 +40,31 @@ class FakeTaggingService:
         )
 
 
-def test_generate_worklog_tags_creates_new_tags_and_updates_worklog(monkeypatch) -> None:
+def test_generate_worklog_tags_returns_ids_without_legacy_callback(monkeypatch) -> None:
     fake_client = FakeTaggingClient()
     monkeypatch.setattr(tagging_tasks, "TaggingClient", lambda: fake_client)
     monkeypatch.setattr(tagging_tasks, "TaggingService", FakeTaggingService)
 
     result = asyncio.run(
-        tagging_tasks._generate_worklog_tags(
-            worklog_id=10,
-            work_content="재고 배치 자동화 작업",
-        )
+        tagging_tasks._generate_identified_tags(work_content="재고 배치 자동화 작업")
     )
 
-    assert fake_client.created_request is not None
-    assert fake_client.created_request[0] == 10
-    assert fake_client.created_request[1] == [1]
-    assert [tag.tag_name for tag in fake_client.created_request[2]] == ["배치자동화"]
+    assert fake_client.created_request is None
     assert result == {
-        "worklog_id": 10,
-        "existing_tags": ["재고"],
-        "new_tags": [
+        "existingTagIds": [1],
+        "newTags": [
             {
                 "tagName": "배치자동화",
                 "description": "정기 배치 자동화 개선 업무에 사용하는 태그",
             }
         ],
     }
+def test_new_tag_rejects_blank_fields():
+    import pytest
+    from pydantic import ValidationError
+    from app.model.tagging_model import NewTag
+
+    with pytest.raises(ValidationError):
+        NewTag(tagName="  ", description="valid")
+    with pytest.raises(ValidationError):
+        NewTag(tagName="valid", description="  ")

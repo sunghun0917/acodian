@@ -29,7 +29,12 @@ class WorklogIndexClient(BaseApiClient):
         )
         response.raise_for_status()
         data = response.json()
-        return bool(data.get("execute", False))
+        if not isinstance(data, dict):
+            raise ValueError("Invalid light index start response")
+        execute = data.get("execute")
+        if type(execute) is not bool:
+            raise ValueError("Invalid light index start response")
+        return execute
 
     async def report_result(
         self,
@@ -53,3 +58,16 @@ class WorklogIndexClient(BaseApiClient):
             json=payload,
         )
         response.raise_for_status()
+
+    async def report_attempt_failed(self, worklog_id: int, request_id: str, execution_id: str) -> bool:
+        """현재 실행의 재시도 허용 여부를 확인한다."""
+        response = await self.client.post(
+            self.api_path(f"/api/internal/worklogs/{worklog_id}/light-index/attempt-failed"),
+            headers=self._get_headers(),
+            json={"requestId": request_id, "executionId": execution_id},
+        )
+        response.raise_for_status()
+        accepted = response.json().get("accepted")
+        if not isinstance(accepted, bool):
+            raise ValueError("Invalid light index attempt response")
+        return accepted

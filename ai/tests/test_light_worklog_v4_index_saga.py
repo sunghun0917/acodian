@@ -269,7 +269,8 @@ def test_delete_gate_failure_returns_per_document_delete_error(monkeypatch, oper
     service, adapter, team, calls = setup(monkeypatch, failure=("STAGING", "worklog-101"))
     mutate = service.delete_worklogs if operation == "delete" else service.reindex_worklogs
     response = asyncio.run(mutate([101]))
-    assert response.items[0].error == "LIGHTRAG_DELETE_FAILED"
+    expected = "LIGHTRAG_DELETE_FAILED" if operation == "delete" else "LIGHTRAG_DELETE_FAILED_COMPENSATED"
+    assert response.items[0].error == expected
     assert not any(item[1] == "delete" for item in calls)
 
 

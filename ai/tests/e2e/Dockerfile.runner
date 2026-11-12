@@ -1,0 +1,4 @@
+FROM axwms-e2e-ai:latest
+USER root
+RUN pip install pytest
+USER app

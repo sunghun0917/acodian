@@ -42,6 +42,7 @@ ERROR_LIGHTRAG_INSERT_TIMEOUT = "LIGHTRAG_INSERT_TIMEOUT"
 ERROR_LIGHTRAG_INSERT_FAILED = "LIGHTRAG_INSERT_FAILED"
 ERROR_LIGHTRAG_DELETE_TIMEOUT = "LIGHTRAG_DELETE_TIMEOUT"
 ERROR_LIGHTRAG_DELETE_FAILED = "LIGHTRAG_DELETE_FAILED"
+ERROR_LIGHTRAG_DELETE_FAILED_COMPENSATED = "LIGHTRAG_DELETE_FAILED_COMPENSATED"
 ERROR_LIGHTRAG_COMPENSATION_FAILED = "LIGHTRAG_COMPENSATION_FAILED"
 
 logger = logging.getLogger(__name__)
@@ -240,7 +241,7 @@ class LightWorklogIndexService:
         self,
         prepared: PreparedLightWorklogDocuments,
     ) -> dict[int, str]:
-        """문서별 잔존물을 지우고 모든 workspace 성공 후 전역 완료를 게시한다."""
+        """모든 workspace 성공 후에만 완료를 게시하고 부분 색인은 보상 삭제한다."""
         if not prepared.documents:
             return {}
 
@@ -288,7 +289,7 @@ class LightWorklogIndexService:
                 elif isinstance(exc, LightRagDeleteTimeoutError):
                     failures[row.worklog_id] = ERROR_LIGHTRAG_DELETE_TIMEOUT
                 elif isinstance(exc, LightRagDeleteFailedError):
-                    failures[row.worklog_id] = ERROR_LIGHTRAG_DELETE_FAILED
+                    failures[row.worklog_id] = ERROR_LIGHTRAG_DELETE_FAILED_COMPENSATED
                 else:
                     logger.exception("LightRAG document indexing failed: %s", document_id)
                     failures[row.worklog_id] = ERROR_LIGHTRAG_INSERT_FAILED
@@ -300,9 +301,7 @@ class LightWorklogIndexService:
     ) -> bool:
         """취소와 분리한 보상 작업의 종료까지 잠금을 유지하되 시간 제한을 둔다."""
         task = asyncio.create_task(asyncio.wait_for(
-            self._compensate_document(
-                adapter, document_id, compensations, completion_attempted=completion_attempted,
-            ),
+            self._compensate_document(adapter, document_id, compensations, completion_attempted=completion_attempted),
             timeout=self._settings.lightrag_insert_timeout_seconds,
         ))
         cancelled = False
@@ -316,8 +315,7 @@ class LightWorklogIndexService:
         try:
             recovered = task.result()
         except TimeoutError:
-            logger.error("LightRAG document compensation timed out: document=%s workspaces=%s",
-                         document_id, [name for name, _ in compensations])
+            logger.error("LightRAG compensation timed out: document=%s", document_id)
             recovered = False
         if cancelled:
             raise asyncio.CancelledError

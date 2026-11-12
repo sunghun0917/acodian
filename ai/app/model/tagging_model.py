@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TAG_DESCRIPTION_MAX_LENGTH = 150
 
@@ -17,6 +17,13 @@ class NewTag(BaseModel):
 
     tag_name: str = Field(alias="tagName", min_length=1, max_length=100)
     description: str = Field(min_length=1, max_length=TAG_DESCRIPTION_MAX_LENGTH)
+
+    @field_validator("tag_name", "description")
+    @classmethod
+    def reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
 
 
 class TaggingChainResult(BaseModel):

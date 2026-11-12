@@ -50,6 +50,29 @@ def test_worklog_index_client_start_skip(monkeypatch):
     assert execute is False
 
 
+@pytest.mark.parametrize("accepted", [True, False, "true", None])
+def test_attempt_failure_response_requires_boolean(monkeypatch, accepted):
+    monkeypatch.setattr(settings, "ai_internal_token", "test-token")
+
+    def handler(request):
+        import json
+        assert request.url.path == "/api/internal/worklogs/101/light-index/attempt-failed"
+        assert request.headers["X-AI-Internal-Token"] == "test-token"
+        assert json.loads(request.content) == {"requestId": "req-1", "executionId": "exec-1"}
+        return httpx.Response(200, json={"accepted": accepted})
+
+    async def run():
+        async with WorklogIndexClient() as client:
+            client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://api.test")
+            return await client.report_attempt_failed(101, "req-1", "exec-1")
+
+    if isinstance(accepted, bool):
+        assert asyncio.run(run()) is accepted
+    else:
+        with pytest.raises(ValueError):
+            asyncio.run(run())
+
+
 def test_worklog_index_client_result_completed(monkeypatch):
     monkeypatch.setattr(settings, "ai_internal_token", "test-token")
     monkeypatch.setattr(settings, "api_base_url", "http://backend-api:8080")
@@ -108,4 +131,16 @@ def test_worklog_index_client_requires_internal_token(monkeypatch):
             await client.report_start(101, "req-1", "exec-1")
 
     with pytest.raises(RuntimeError, match="AI_INTERNAL_TOKEN"):
+        asyncio.run(run())
+
+
+@pytest.mark.parametrize("execute", [None, "true", 1, [], {}])
+def test_start_rejects_non_boolean_response(monkeypatch, execute):
+    monkeypatch.setattr(settings, "ai_internal_token", "test-token")
+    async def run():
+        async with WorklogIndexClient() as client:
+            client._client = httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"execute": execute})), base_url="http://api.test")
+            return await client.report_start(101, "req-1", "exec-1")
+    with pytest.raises(ValueError):
         asyncio.run(run())

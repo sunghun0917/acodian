@@ -5,6 +5,7 @@ api 의 TriggerFileSummaryDto.Request 와 필드명이 1:1 매칭되어야 한�
 """
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -22,6 +23,8 @@ class FileSummaryRequest(BaseModel):
     storage_key: str = Field(alias="storageKey", min_length=1)
     original_name: str = Field(alias="originalName", min_length=1)
     file_extension: str = Field(alias="fileExtension", min_length=1)
+    request_id: UUID = Field(alias="requestId")
+    input_hash: str = Field(alias="inputHash", pattern="^[0-9a-f]{64}$")
 
 
 class FileSummaryAcceptedResponse(BaseModel):
@@ -31,4 +34,5 @@ class FileSummaryAcceptedResponse(BaseModel):
 
     file_id: int = Field(alias="fileId")
     summary_task_id: str = Field(alias="summaryTaskId")
+    request_id: UUID | None = Field(default=None, alias="requestId")
     status: Literal["ACCEPTED"] = "ACCEPTED"
