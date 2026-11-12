@@ -21,13 +21,25 @@ public class WorklogLightOutboxWorker {
 
     private final WorklogLightOutboxRepository repository;
     private final WorklogLightIndexClient client;
+    private final InternalWorklogLightIndexService indexService;
 
     /** 일정한 소량의 기한 도래 작업을 처리해 장애 복구와 재시도를 보장한다. */
     @Scheduled(fixedDelayString = "${ai.worklog-light-index.outbox-poll-delay-ms:5000}")
     public void poll() {
+        for (Claim expired : repository.expiredClaims(20)) {
+            try {
+                indexService.reconcile(expired);
+            } catch (RuntimeException e) {
+                log.warn("AI Light outbox 회수 실패 worklogId={}", expired.worklogId(), e);
+            }
+        }
         for (int i = 0; i < 20; i++) {
-            if (!processOne(null)) {
-                break;
+            try {
+                if (!processOne(null)) {
+                    break;
+                }
+            } catch (RuntimeException e) {
+                log.warn("AI Light outbox 처리 중 오류", e);
             }
         }
     }
@@ -50,7 +62,7 @@ public class WorklogLightOutboxWorker {
                     claim.worklogId(), claim.requestId(), claim.operation(), claim.token());
             repository.awaitResult(claim);
         } catch (RuntimeException e) {
-            repository.fail(claim, e.toString());
+            indexService.deliveryFailed(claim, e.toString());
             log.warn("AI Light outbox 처리 실패 worklogId={} operation={} revision={}",
                     claim.worklogId(), claim.operation(), claim.revision(), e);
         }

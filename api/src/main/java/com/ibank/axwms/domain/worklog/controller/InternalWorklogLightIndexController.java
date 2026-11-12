@@ -29,6 +29,15 @@ public class InternalWorklogLightIndexController implements InternalWorklogLight
     }
 
     @Override
+    @PostMapping("/attempt-failed")
+    public AttemptResponse attemptFailed(@PathVariable Long worklogId,
+            @RequestHeader(value = "X-AI-Internal-Token", required = false) String token,
+            @Valid @RequestBody StartRequest request) {
+        validateRequest(worklogId, token);
+        return new AttemptResponse(service.attemptFailed(worklogId, request.requestId(), request.executionId()));
+    }
+
+    @Override
     @PostMapping("/result")
     public EmptyResponse result(@PathVariable Long worklogId,
             @RequestHeader(value = "X-AI-Internal-Token", required = false) String token,
@@ -36,6 +45,13 @@ public class InternalWorklogLightIndexController implements InternalWorklogLight
         validateRequest(worklogId, token);
         service.result(worklogId, request.requestId(), request.executionId(), request.status(), request.error());
         return EmptyResponse.INSTANCE;
+    }
+
+    /** 입력 검증보다 토큰 검증을 먼저 적용해 비인증 호출에 본문 오류를 노출하지 않는다. */
+    @ModelAttribute
+    void validateBeforeBody(@RequestHeader(value = "X-AI-Internal-Token", required = false) String token,
+            @PathVariable Long worklogId) {
+        validateRequest(worklogId, token);
     }
 
     /** 내부 네트워크도 설정 토큰과 양수 업무 ID가 검증된 요청만 허용한다. */

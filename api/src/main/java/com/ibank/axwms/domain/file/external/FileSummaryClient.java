@@ -15,8 +15,10 @@ public class FileSummaryClient {
     private static final String SUMMARIZE_FILES_PATH = "/summarize/files";
 
     private final RestClient restClient;
+    private final String internalToken;
 
     public FileSummaryClient(AiFileSummaryProperties properties) {
+        this.internalToken = properties.internalToken();
         this.restClient = RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .requestFactory(requestFactory(properties))
@@ -30,11 +32,19 @@ public class FileSummaryClient {
      * @param request 요약 대상 파일 식별자와 스토리지 키
      */
     public void requestSummary(TriggerFileSummaryDto.Request request) {
-        restClient.post()
-                .uri(SUMMARIZE_FILES_PATH)
-                .body(request)
-                .retrieve()
-                .toBodilessEntity();
+        if (internalToken == null || internalToken.isBlank() || request.requestId() == null || request.fileId() == null || request.fileId() <= 0
+                || request.inputHash() == null
+                || !request.inputHash().matches("[0-9a-f]{64}")) {
+            throw new IllegalStateException("AI 파일 작업 식별자가 올바르지 않습니다");
+        }
+        var response = restClient.post().uri(SUMMARIZE_FILES_PATH).header("X-AI-Internal-Token", internalToken).body(request).retrieve()
+                .toEntity(TriggerFileSummaryDto.Response.class);
+        var body = response.getBody();
+        if (response.getStatusCode().value() != 202 || body == null || !request.fileId().equals(body.fileId())
+                || !request.requestId().equals(body.requestId()) || !"ACCEPTED".equals(body.status())
+                || body.summaryTaskId() == null || body.summaryTaskId().isBlank()) {
+            throw new IllegalStateException("AI 파일 접수 결과가 실패 또는 누락되었습니다");
+        }
     }
 
     /** AI 장애가 콜백 이전 트리거 경로를 길게 잡아두지 않도록 connect/read timeout 을 짧게 제한한다. */

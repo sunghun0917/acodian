@@ -25,6 +25,8 @@ import com.ibank.axwms.domain.worklog.event.WorklogLightDeleteRequestedEvent;
 import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogPolishClient;
 import com.ibank.axwms.domain.worklog.policy.WorklogStatusPolicy;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiTaskRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogDependencyRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogStatusHistoryRepository;
@@ -69,6 +71,7 @@ public class WorklogService {
     private final WorklogStatusHistoryRepository worklogStatusHistoryRepository;
     private final FileRepository fileRepository;
     private final TeamService teamService;
+    private final WorklogAiTaskRetryService worklogAiTaskRetryService;
     private final FileService fileService;
     private final WorklogStatusHistoryService worklogStatusHistoryService;
     private final WorklogDependencyService worklogDependencyService;
@@ -77,6 +80,8 @@ public class WorklogService {
     private final ApplicationEventPublisher eventPublisher;
     private final WorklogPolishClient worklogPolishClient;
     private final AiWorklogLightIndexProperties worklogLightIndexProperties;
+    private final WorklogAiTaskRepository worklogAiTaskRepository;
+    private final WorklogAiPostProcessOutboxRepository worklogAiTaskLocks;
 
     /**
      * 인증된 작성 보조 요청의 초안을 AI 서버에 전달하고 저장 없이 다듬어진 본문만 반환한다.
@@ -311,6 +316,8 @@ public class WorklogService {
                               Long worklogId,
                               UpdateWorklogApiDto.Request request,
                               List<MultipartFile> newFiles) {
+        // AI 결과 반영과 같은 업무→작업 잠금 순서를 지키고, 결과가 바꾼 최신 업무 행을 읽어 버전 충돌을 피한다.
+        worklogAiTaskLocks.lockWorklog(worklogId);
         Worklog worklog = getEditableWorklogOrThrow(principal, worklogId);
 
         String oldTitle = worklog.getTitle();
@@ -360,7 +367,9 @@ public class WorklogService {
 
         if (request.removeFileIds() != null && !request.removeFileIds().isEmpty()) {
             fileService.softDeleteWorklogFiles(worklogId, request.removeFileIds());
+            worklogAiTaskRepository.supersedeFileTasks(worklogId, request.removeFileIds());
         }
+        supersedeAiTasksIfInputChanged(worklog, oldRequestContent, oldWorkContent);
 
         fileService.uploadWorklogFiles(worklogId, principal.userId(), newFiles);
 
@@ -377,16 +386,43 @@ public class WorklogService {
         }
     }
 
-    /** 작성자 본인의 업무만 소프트 삭제하고 커밋 뒤 AI 문서 삭제를 요청한다. */
+    /** 작성자 본인의 업무만 소프트 삭제하고 진행 중 일반 AI 작업을 같은 트랜잭션에서 종결한 뒤 커밋 뒤 AI 문서 삭제를 요청한다. */
     @Transactional
     public void deleteWorklog(CustomUserPrincipal principal, Long worklogId) {
         if (worklogLightIndexProperties.internalToken() == null
                 || worklogLightIndexProperties.internalToken().isBlank()) {
             throw new BusinessException(ErrorCode.WORKLOG_LIGHT_DELETE_UNAVAILABLE);
         }
+        worklogAiTaskLocks.lockWorklog(worklogId);
         Worklog worklog = getEditableWorklogOrThrow(principal, worklogId);
         worklog.softDelete();
+        worklogAiTaskRepository.supersedeAllTasks(worklogId);
         eventPublisher.publishEvent(new WorklogLightDeleteRequestedEvent(worklogId));
+    }
+
+    /**
+     * 요약·태그 입력(요청·업무 내용)이 실제로 바뀐 수정에서만 진행 중 또는 실패한 작업을 최신 snapshot 의 새 요청으로 교체한다.
+     * 제목·상태·파일 등 무관한 수정과 이미 성공한 작업은 건드리지 않으며, 요약이 교체되면 실패 표시 대신 새 요청 처리 중으로 표시한다.
+     */
+    private void supersedeAiTasksIfInputChanged(Worklog worklog, String oldRequestContent, String oldWorkContent) {
+        if (Objects.equals(oldRequestContent, worklog.getRequestContent())
+                && Objects.equals(oldWorkContent, worklog.getWorkContent())) {
+            return;
+        }
+        Team team = teamService.getTeamOrThrow(worklog.getTeamId());
+        List<String> superseded = worklogAiTaskRepository.supersedeChangedWorklogTasks(new WorklogAiPostProcessRequestedEvent(
+                worklog.getId(),
+                worklog.getTitle(),
+                worklog.getRequestContent(),
+                worklog.getWorkContent(),
+                worklog.getAuthorId(),
+                worklog.getTeamId(),
+                team.getDepartmentId(),
+                List.of()
+        ));
+        if (superseded.contains("SUMMARY")) {
+            worklog.startAiProcessing();
+        }
     }
 
     /**
@@ -435,9 +471,7 @@ public class WorklogService {
             throw new BusinessException(ErrorCode.WORKLOG_AI_RETRY_STATUS_INVALID);
         }
 
-        Team team = teamService.getTeamOrThrow(worklog.getTeamId());
-        worklog.startAiProcessing();
-        publishWorklogAiPostProcessRequest(worklog, team, List.of());
+        worklogAiTaskRetryService.retryCurrentSummary(principal, worklogId);
     }
 
     /**

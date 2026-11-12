@@ -1,6 +1,6 @@
 package com.ibank.axwms.domain.worklog.event;
 
-import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiTaskRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +15,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class WorklogAiPostProcessTrigger {
 
-    private final WorklogAiPostProcessOutboxRepository repository;
+    private final WorklogAiTaskRepository repository;
     private final WorklogRepository worklogRepository;
     private final WorklogLightOutboxRepository lightOutboxRepository;
 
@@ -23,7 +23,7 @@ public class WorklogAiPostProcessTrigger {
     @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
     public void onCommit(WorklogAiPostProcessRequestedEvent event) {
         worklogRepository.flush();
-        if (repository.enqueue(event)) {
+        if (repository.enqueueInitialTasks(event)) {
             lightOutboxRepository.enqueue(event.worklogId(), "INDEX");
         }
     }

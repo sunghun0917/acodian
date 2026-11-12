@@ -1,42 +1,39 @@
 package com.ibank.axwms.domain.file.event;
 
-import com.ibank.axwms.domain.file.dto.TriggerFileSummaryDto;
-import com.ibank.axwms.domain.file.external.FileSummaryClient;
+import com.ibank.axwms.domain.file.repository.FileRepository;
+import com.ibank.axwms.domain.organization.team.repository.TeamRepository;
+import com.ibank.axwms.domain.worklog.event.WorklogAiPostProcessRequestedEvent;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiTaskRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
+import com.ibank.axwms.global.error.BusinessException;
+import com.ibank.axwms.global.error.ErrorCode;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
-/**
- * 업무 첨부 파일이 저장된 트랜잭션이 커밋된 직후, AI 서버에 파일 1건 요약을 fire-and-forget 으로 요청한다.
- * 콜백 갱신은 별도 PATCH /internal/files/{fileId}/ai-result 경로로 들어온다.
- * AI 서버 장애로 트리거가 실패해도 사용자 요청은 이미 커밋되어 있으므로 예외는 log 만 남기고 흡수한다.
- */
-@Slf4j
+/** 업무 수정 중 추가된 파일의 요약 의도를 파일 저장과 같은 트랜잭션에 보관한다. */
 @Component
 @RequiredArgsConstructor
 public class WorklogFileAiSummaryTrigger {
+    private final FileRepository files;
+    private final WorklogRepository worklogs;
+    private final TeamRepository teams;
+    private final WorklogAiTaskRepository tasks;
 
-    private final FileSummaryClient fileSummaryClient;
-
-    /** AFTER_COMMIT 단계에서 호출되어 파일 단위 요약 요청을 1회 발사한다. 실패는 흡수하고 재시도하지 않는다. */
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    /** 커밋 실패 시 파일과 작업이 함께 롤백되며 외부 호출은 스케줄러에 맡긴다. */
+    @TransactionalEventListener(phase = TransactionPhase.BEFORE_COMMIT)
     public void onCommit(WorklogFileAiSummaryRequestedEvent event) {
-
-        log.info("[trigger] fired fileId={} key={}", event.fileId(), event.storageKey());
-        
-        TriggerFileSummaryDto.Request request = new TriggerFileSummaryDto.Request(
-                event.fileId(),
-                event.worklogId(),
-                event.storageKey(),
-                event.originalName(),
-                event.fileExtension()
-        );
-        try {
-            fileSummaryClient.requestSummary(request);
-        } catch (RuntimeException e) {
-            log.warn("AI 파일 요약 트리거 실패 fileId={} storageKey={}", event.fileId(), event.storageKey(), e);
-        }
+        files.flush();
+        var worklog = worklogs.findById(event.worklogId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.WORKLOG_NOT_FOUND));
+        Long departmentId = teams.findById(worklog.getTeamId()).map(team -> team.getDepartmentId()).orElse(null);
+        var file = new WorklogAiPostProcessRequestedEvent.FileSummaryTarget(event.fileId(), event.storageKey(),
+                event.originalName(), event.fileExtension());
+        var snapshot = new WorklogAiPostProcessRequestedEvent(worklog.getId(), worklog.getTitle(),
+                worklog.getRequestContent(), worklog.getWorkContent(), worklog.getAuthorId(), worklog.getTeamId(),
+                departmentId, List.of(file));
+        tasks.enqueueFileTask(snapshot, file);
     }
 }

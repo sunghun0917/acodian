@@ -8,6 +8,7 @@ import com.ibank.axwms.domain.worklog.WorklogStatus;
 import com.ibank.axwms.domain.worklog.dto.ApplyWorklogAiTagsApiDto;
 import com.ibank.axwms.domain.worklog.entity.Worklog;
 import com.ibank.axwms.domain.worklog.entity.WorklogTag;
+import com.ibank.axwms.domain.worklog.event.WorklogLightIndexRequestedEvent;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogTagRepository;
 import com.ibank.axwms.global.error.BusinessException;
@@ -19,6 +20,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -48,8 +50,26 @@ class InternalTagAiCallbackServiceTest {
     @Mock
     private TagService tagService;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     @InjectMocks
     private InternalTagAiCallbackService internalTagAiCallbackService;
+
+    @Test
+    @DisplayName("이미 연결된 태그만 반환하면 재색인 요청을 발행하지 않는다")
+    void 이미_연결된_태그만_반환하면_재색인을_요청하지_않는다() {
+        var request = new ApplyWorklogAiTagsApiDto.Request(List.of(1L), List.of());
+        given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(createWorklog()));
+        given(tagService.normalizeExistingTagIds(List.of(1L))).willReturn(List.of(1L));
+        given(worklogTagRepository.findByWorklogIdAndTagIdIn(WORKLOG_ID, List.of(1L)))
+                .willReturn(List.of(createWorklogTag(WORKLOG_ID, 1L)));
+
+        internalTagAiCallbackService.applyAiGeneratedTags(WORKLOG_ID, request);
+
+        verify(eventPublisher, never()).publishEvent(org.mockito.ArgumentMatchers.any(WorklogLightIndexRequestedEvent.class));
+        verify(worklogTagRepository, never()).saveAll(org.mockito.ArgumentMatchers.<List<WorklogTag>>any());
+    }
 
     @Test
     @DisplayName("AI 태그 반영 시 신규 태그를 생성하고 새로 연결된 태그만 사용 횟수를 증가시킨다")
@@ -75,6 +95,7 @@ class InternalTagAiCallbackServiceTest {
         verify(tagRepository).insertAiGeneratedTagsIgnoreDuplicates(List.of(new AiGeneratedTagCommand("재고", "재고 흐름 점검")));
         verify(worklogTagRepository).saveAll(org.mockito.ArgumentMatchers.<List<WorklogTag>>any());
         verify(tagService).incrementUsageCountByIds(List.of(1L, 3L));
+        verify(eventPublisher).publishEvent(new WorklogLightIndexRequestedEvent(WORKLOG_ID));
     }
 
     @Test

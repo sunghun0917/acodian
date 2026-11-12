@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -46,6 +47,17 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final ApplicationEventPublisher applicationEventPublisher;
+
+    /** 결과·도메인 변경 트랜잭션에 참여해 작업별 알림과 커밋 후 전파를 함께 확정한다. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Notification createAiTaskResultNotification(Long userId, Long departmentId, Long teamId, Long worklogId,
+                                                       String title, UUID requestId, String taskKind, Long targetId,
+                                                       String result) {
+        Notification saved = notificationRepository.saveAndFlush(Notification.createAiTaskResult(
+                userId, departmentId, teamId, worklogId, title, requestId, taskKind, targetId, result));
+        publishNotificationCreatedEvents(List.of(saved));
+        return saved;
+    }
 
     /**
      * 현재 로그인 사용자가 수신자인 알림만 조회한다.
