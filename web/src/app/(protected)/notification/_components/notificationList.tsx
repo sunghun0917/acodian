@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { CardSpotlight } from "@/components/ui/card-spotlight";
 import { cn } from "@/lib/utils";
 import type { NotificationItem } from "../_types/notification.types";
-import { resolveNotificationDeepLink } from "../_utils/resolveNotificationDeepLink";
+import { getNotificationRetryTarget, resolveNotificationDeepLink } from "../_utils/resolveNotificationDeepLink";
 
 const TRAILING_NOTIFICATION_DATE_PATTERN =
   /\s*마감일\s*:\s*\d{4}-\d{2}-\d{2}(?:\s*,\s*확인 기준일\s*:\s*\d{4}-\d{2}-\d{2})?\s*$/;
@@ -14,9 +14,13 @@ const TRAILING_NOTIFICATION_DATE_PATTERN =
 export function NotificationList({
   notifications,
   onMarkRead,
+  onRetry,
+  isRetrying,
 }: {
   notifications: NotificationItem[];
   onMarkRead: (id: number) => void;
+  onRetry: (target: { worklogId: number; requestId: string }) => void;
+  isRetrying: boolean;
 }) {
   if (notifications.length === 0) {
     return (
@@ -30,6 +34,8 @@ export function NotificationList({
     <div className="space-y-3">
       {notifications.map((notification) => {
         const content = getNotificationDisplayContent(notification.content);
+        const retryTarget = getNotificationRetryTarget(notification);
+        const href = resolveNotificationDeepLink(notification);
 
         return (
           <CardSpotlight
@@ -75,6 +81,11 @@ export function NotificationList({
                   {formatNotificationCreatedAt(notification.createdAt)}
                 </time>
                 <div className="flex flex-wrap justify-end gap-2">
+                  {retryTarget ? (
+                    <Button type="button" disabled={isRetrying} onClick={() => onRetry(retryTarget)}>
+                      {isRetrying ? "재시도 요청 중" : "실패한 작업 재시도"}
+                    </Button>
+                  ) : null}
                   {!notification.isRead ? (
                     <Button
                       type="button"
@@ -85,13 +96,13 @@ export function NotificationList({
                       읽음 처리
                     </Button>
                   ) : null}
-                  <Button
+                  {href ? <Button
                     asChild
                     variant="secondary"
                     className="h-11 px-5 text-sm font-semibold sm:min-w-32"
                   >
                     <Link
-                      href={resolveNotificationDeepLink(notification)}
+                      href={href}
                       onClick={() => {
                         if (!notification.isRead) {
                           onMarkRead(notification.id);
@@ -100,7 +111,7 @@ export function NotificationList({
                     >
                       관련 화면 이동
                     </Link>
-                  </Button>
+                  </Button> : null}
                 </div>
               </div>
             </div>

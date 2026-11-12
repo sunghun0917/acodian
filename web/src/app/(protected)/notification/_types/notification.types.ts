@@ -17,6 +17,9 @@ export interface NotificationApiItem {
   isRead: boolean;
   readAt: string | null;
   createdAt: string;
+  retryable?: boolean;
+  retryRequestId?: string | null;
+  targetDeleted?: boolean;
 }
 
 export interface NotificationItem extends NotificationApiItem {

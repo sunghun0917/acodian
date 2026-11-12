@@ -46,4 +46,9 @@ export const notificationService = {
 
   markAllRead: () =>
     apiClient.patch<MarkAllNotificationsReadResponse>("/notifications/me/read-all"),
+
+  retryAiTask: ({ worklogId, requestId }: { worklogId: number; requestId: string }) =>
+    apiClient.post<EmptyResponse>(
+      `/worklogs/${worklogId}/ai-tasks/${encodeURIComponent(requestId)}/retry`,
+    ),
 };

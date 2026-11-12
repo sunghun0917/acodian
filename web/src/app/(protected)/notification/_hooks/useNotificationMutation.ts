@@ -21,6 +21,13 @@ export function useNotificationMutation() {
     },
   });
 
+  const retryAiTaskMutation = useMutation({
+    mutationFn: notificationService.retryAiTask,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
+
   return {
     markRead: (id: number) => {
       markReadMutation.mutate(id);
@@ -30,5 +37,8 @@ export function useNotificationMutation() {
     },
     isMarkingRead: markReadMutation.isPending,
     isMarkingAllRead: markAllReadMutation.isPending,
+    retryAiTask: retryAiTaskMutation.mutate,
+    isRetryingAiTask: retryAiTaskMutation.isPending,
+    retryAiTaskError: retryAiTaskMutation.error,
   };
 }
