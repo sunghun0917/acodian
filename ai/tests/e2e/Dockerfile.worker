@@ -1,0 +1,6 @@
+FROM axwms-e2e-ai:latest
+USER root
+RUN mkdir -p /app/e2e-token-cache \
+    && TIKTOKEN_CACHE_DIR=/app/e2e-token-cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')" \
+    && chmod -R a+rX /app/e2e-token-cache
+USER app

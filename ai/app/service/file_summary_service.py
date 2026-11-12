@@ -13,15 +13,16 @@ class FileSummaryService:
         self,
         request: FileSummaryRequest,
     ) -> FileSummaryAcceptedResponse:
-        summary_task = generate_file_summary.delay(
-            request.file_id,
-            request.worklog_id,
-            request.storage_key,
-            request.original_name,
-            request.file_extension,
-        )
+        args = (request.file_id, request.worklog_id, request.storage_key, request.original_name, request.file_extension)
+        identity = None
+        if request.request_id is not None:
+            identity = {"requestId": str(request.request_id),
+                        "inputHash": request.input_hash, "taskKind": "FILE_SUMMARY", "targetId": request.file_id}
+        summary_task = generate_file_summary.delay(*args, identity) if identity else generate_file_summary.delay(*args)
 
         return FileSummaryAcceptedResponse(
             file_id=request.file_id,
             summary_task_id=summary_task.id,
+            status="ACCEPTED",
+            **({"request_id": request.request_id} if request.request_id is not None else {}),
         )

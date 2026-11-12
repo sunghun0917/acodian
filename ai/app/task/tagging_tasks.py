@@ -1,13 +1,10 @@
 import asyncio
-import logging
-
 from app.client.tagging_client import TaggingClient
 from app.model.tagging_model import MetaTag, NewTag
+from app.service.ai_task_executor import execute_ai_task
 from app.service.tagging_service import TaggingService
 from app.task.celery_app import celery_app
-from app.task.retry_policy import retry_ai_task
-
-logger = logging.getLogger(__name__)
+from app.task.task_identity import validate_task_identity
 
 
 @celery_app.task(name="worklog.tagging", bind=True)
@@ -15,51 +12,20 @@ def generate_worklog_tags(
     self,
     worklog_id: int,
     work_content: str,
+    metadata: dict | None = None,
 ) -> dict[str, int | list[str] | list[dict[str, str]]]:
-    try:
-        return asyncio.run(
-            _generate_worklog_tags(
-                worklog_id=worklog_id,
-                work_content=work_content,
-            )
-        )
-    except Exception as exc:
-        retry_ai_task(self, exc, task_name="worklog.tagging", target_id=worklog_id)
-        logger.exception("태그 생성 실패: worklog_id=%s", worklog_id)
-        raise
+    validate_task_identity(metadata, "TAG", worklog_id)
+    return asyncio.run(execute_ai_task(worklog_id, metadata, lambda: _generate_identified_tags(work_content)))
 
 
-async def _generate_worklog_tags(
-    worklog_id: int,
-    work_content: str,
-) -> dict[str, int | list[str]]:
-    async with TaggingClient() as tagging_client:
-        existing_tags = await tagging_client.list_tags()
-        tagging_result = await TaggingService().generate_tags(
-            work_content=work_content,
-            existing_tags=existing_tags,
-        )
-
-        existing_tag_ids = _find_existing_tag_ids(
-            tag_names=tagging_result.existing_tags,
-            existing_tags=existing_tags,
-        )
-        await tagging_client.apply_worklog_ai_tags(
-            worklog_id=worklog_id,
-            existing_tag_ids=existing_tag_ids,
-            new_tags=tagging_result.new_tags,
-        )
-    logger.info(
-        "태그 생성 완료: worklog_id=%s, existing_tags=%s, new_tags=%s",
-        worklog_id,
-        tagging_result.existing_tags,
-        tagging_result.new_tags,
-    )
-
+async def _generate_identified_tags(work_content: str) -> dict:
+    """태그를 생성해 결과 payload를 반환한다."""
+    async with TaggingClient() as client:
+        existing_tags = await client.list_tags()
+        result = await TaggingService().generate_tags(work_content=work_content, existing_tags=existing_tags)
     return {
-        "worklog_id": worklog_id,
-        "existing_tags": tagging_result.existing_tags,
-        "new_tags": _dump_new_tags(tagging_result.new_tags),
+        "existingTagIds": _find_existing_tag_ids(result.existing_tags, existing_tags),
+        "newTags": _dump_new_tags(result.new_tags),
     }
 
 

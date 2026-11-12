@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     celery_task_time_limit_seconds: int = Field(default=540, ge=1)
     worklog_light_index_timeout_seconds: int = Field(default=300, gt=0)
     worklog_light_index_result_dir: Path = Path("./data/worklog-index-results")
+    gemini_inline_max_bytes: int = Field(default=10485760, gt=0)
 
     @model_validator(mode="after")
     def validate_worker_time_budget(self) -> "Settings":

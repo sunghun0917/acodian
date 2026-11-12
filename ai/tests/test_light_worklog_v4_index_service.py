@@ -420,6 +420,85 @@ def test_index_service_calls_text_and_custom_kg_from_one_source_fetch(monkeypatc
     asyncio.run(run_case())
 
 
+def test_reindex_reads_new_source_after_inflight_index_finishes() -> None:
+    from dataclasses import replace
+
+    async def run_case() -> None:
+        prepared_a, release_a, started_b = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        row = replace(make_source_row(101), title="version A")
+        reads = []
+        writes = []
+        team_writes = []
+
+        class Reader:
+            async def fetch_source_rows(self, ids):
+                assert ids == [101]
+                reads.append(row.title)
+                return {101: row}
+
+        class Adapter(OwnershipAdapter):
+            async def delete_document(self, document_id):
+                writes.append(("delete", document_id))
+
+            async def index_documents(self, docs):
+                writes.append(("text", docs[0].text))
+
+            async def index_custom_kg_documents(self, docs):
+                targets = {r["tgt_id"] for r in docs[0].custom_kg["relationships"]}
+                writes.append(("kg", targets))
+
+        class TeamPool:
+            def adapter_for(self, team_id):
+                assert team_id == 7
+                return OwnershipAdapter()
+
+            async def index_source_rows(self, rows):
+                team_writes.append((rows[0].title, [tag.tag_id for tag in rows[0].tags]))
+
+        class PausedService(LightWorklogIndexService):
+            async def _index_found_documents(self, prepared):
+                if not prepared_a.is_set():
+                    prepared_a.set()
+                    await asyncio.wait_for(release_a.wait(), timeout=5)
+                return await super()._index_found_documents(prepared)
+
+        adapter, pool, reader = Adapter(), TeamPool(), Reader()
+        service = PausedService(adapter_factory=lambda: adapter, team_adapter_factory=lambda: pool,
+                                source_reader=reader)
+        task_a = asyncio.create_task(service.index_worklogs([101]))
+        await asyncio.wait_for(prepared_a.wait(), timeout=5)
+        row = replace(row, title="version B", tags=[LightWorklogTag(22, "new tag", None)])
+
+        async def run_b():
+            started_b.set()
+            return await service.reindex_worklogs([101])
+
+        task_b = asyncio.create_task(run_b())
+        try:
+            await asyncio.wait_for(started_b.wait(), timeout=5)
+            assert reads == ["version A"]
+            assert not task_b.done()
+            release_a.set()
+            result_a, result_b = await asyncio.wait_for(asyncio.gather(task_a, task_b), timeout=5)
+        finally:
+            release_a.set()
+            for task in (task_a, task_b):
+                if not task.done():
+                    task.cancel()
+
+        assert result_a.items[0].indexed and result_b.items[0].indexed
+        assert reads == ["version A", "version B"]
+        assert writes[0] == ("delete", "worklog-101")
+        assert "title: version A" in writes[1][1]
+        assert "Tag:11" in writes[2][1] and "Tag:22" not in writes[2][1]
+        assert writes[3] == ("delete", "worklog-101")
+        assert "title: version B" in writes[4][1]
+        assert "Tag:22" in writes[5][1] and "Tag:11" not in writes[5][1]
+        assert team_writes == [("version A", [11]), ("version B", [22])]
+
+    asyncio.run(run_case())
+
+
 def test_index_service_maps_custom_kg_batch_failure_to_all_found_ids(monkeypatch) -> None:
     class _Reader:
         async def fetch_source_rows(self, worklog_ids: list[int]):
@@ -664,6 +743,26 @@ def test_reindex_service_all_delete_failures_invalidates_cache_and_returns_error
         assert cache.bump_count == 1
 
     asyncio.run(run_case())
+
+
+def test_index_delete_failure_after_confirmed_compensation_has_distinct_error(monkeypatch):
+    class Reader:
+        async def fetch_source_rows(self, ids):
+            return {101: make_source_row(101)}
+
+    class Adapter(OwnershipAdapter):
+        async def delete_document(self, document_id):
+            raise LightRagDeleteFailedError("delete failed")
+
+    class Pool:
+        def adapter_for(self, team_id):
+            return OwnershipAdapter()
+
+    monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
+    monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", Adapter)
+    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", Pool)
+    result = asyncio.run(LightWorklogIndexService().index_worklogs([101]))
+    assert result.items[0].error == "LIGHTRAG_DELETE_FAILED_COMPENSATED"
 
 
 def test_index_service_custom_kg_failure_still_bumps_cache_version(monkeypatch) -> None:

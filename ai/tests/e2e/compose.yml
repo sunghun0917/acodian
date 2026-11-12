@@ -1,0 +1,166 @@
+# All credentials below are fixed synthetic E2E-only values, never real secrets.
+services:
+  base-image:
+    profiles: ["build"]
+    image: axwms-e2e-ai:latest
+    build:
+      context: ../../
+
+  api:
+    build:
+      context: ../../../api
+      args:
+        JAR_FILE: build/libs/ax-wms-api-0.0.1-SNAPSHOT.jar
+    environment:
+      CELERY_TASK_TIME_LIMIT_SECONDS: ${CELERY_TASK_TIME_LIMIT_SECONDS:-540}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: e2e
+      DB_USERNAME: e2e
+      DB_PASSWORD: e2e-only-password
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AWS_S3_BUCKET: e2e-only
+      AWS_REGION: ap-northeast-2
+      AWS_S3_BASE_PREFIX: e2e/
+      AWS_S3_PUBLIC_BASE_URL: http://unavailable.invalid
+      AWS_ACCESS_KEY_ID: e2e-only
+      AWS_SECRET_ACCESS_KEY: e2e-only
+      AI_INTERNAL_TOKEN: e2e-only-internal-token
+      JWT_SECRET: e2e-only-secret-abcdefghijklmnopqrstuvwxyz-1234567890
+      AI_WORKLOG_LIGHT_INDEX_BASE_URL: http://proxy:8300/ai
+      AI_WORKLOG_LIGHT_INDEX_OUTBOX_POLL_DELAY_MS: 15000
+      AI_WORKLOG_PIPELINE_BASE_URL: http://ai:8200/ai
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  ai: &ai
+    image: axwms-e2e-worker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment: &ai-environment
+      CELERY_TASK_TIME_LIMIT_SECONDS: ${CELERY_TASK_TIME_LIMIT_SECONDS:-540}
+      PYTHONPATH: /app
+      WORKLOG_NORMAL_E2E_ENABLED: "1"
+      API_BASE_URL: http://api:8100/api
+      PGVECTOR_DSN: postgresql://e2e:e2e-only-password@postgres:5432/e2e
+      LIGHTRAG_PG_DSN: postgresql://e2e:e2e-only-password@postgres:5432/rag_e2e
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      AI_INTERNAL_TOKEN: e2e-only-internal-token
+      GEMINI_API_KEY: e2e-only-not-a-real-provider-key
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: e2e-only-password
+      LIGHTRAG_QDRANT_URL: http://qdrant:6333
+      LIGHTRAG_WORKING_DIR: /app/data/lightrag-v3
+      LANGFUSE_TRACING_ENABLED: "false"
+      TIKTOKEN_CACHE_DIR: /app/e2e-token-cache
+    command: ["python", "/app/e2e/ai_entry.py"]
+    volumes:
+      - ai-data:/app/data
+      - ./worker_hooks.py:/app/e2e/worker_hooks.py:ro
+      - ./ai_entry.py:/app/e2e/ai_entry.py:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+
+  index-worker:
+    <<: *ai
+    image: axwms-e2e-worker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command: ["python", "/app/e2e/worker_hooks.py"]
+    volumes:
+      - ai-data:/app/data
+      - ./worker_hooks.py:/app/e2e/worker_hooks.py:ro
+
+  proxy:
+    image: axwms-e2e-ai:latest
+    command: ["python", "/app/e2e/proxy.py"]
+    volumes:
+      - ./proxy.py:/app/e2e/proxy.py:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  runner:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    environment:
+      WORKLOG_NORMAL_E2E_ENABLED: "1"
+      WORKLOG_NORMAL_E2E_API_URL: http://api:8100/api
+      WORKLOG_NORMAL_E2E_AI_URL: http://ai:8200/ai
+      WORKLOG_NORMAL_E2E_BROKER_URL: redis://redis:6379/0
+      PGVECTOR_DSN: postgresql://e2e:e2e-only-password@postgres:5432/e2e
+      LIGHTRAG_PG_DSN: postgresql://e2e:e2e-only-password@postgres:5432/rag_e2e
+      REDIS_URL: redis://redis:6379/0
+      API_BASE_URL: http://api:8100/api
+      AI_INTERNAL_TOKEN: e2e-only-internal-token
+    volumes:
+      - ../:/app/tests:ro
+    command: ["python", "-m", "pytest", "tests/test_light_normal_flow_e2e.py", "-q", "-rs"]
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: e2e-only-password
+      POSTGRES_DB: e2e
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/e2e-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e -d e2e"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8.10.0-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 3 bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/e2e-only-password
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "NEO4J_USERNAME=\"$${NEO4J_AUTH%%/*}\" NEO4J_PASSWORD=\"$${NEO4J_AUTH#*/}\" cypher-shell 'RETURN 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+networks:
+  default:
+    internal: true
+
+volumes:
+  ai-data:

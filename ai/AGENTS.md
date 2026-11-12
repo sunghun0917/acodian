@@ -113,13 +113,14 @@ ai/
 | `app/prompt/tag_merge_prompt.py` | 태그 병합 후보 |
 | `app/chain/tag_merge_chain.py` | 태그 병합 후보 |
 | `app/service/tag_merge_service.py` | 태그 병합 후보 |
-| `app/light/v3/**` | 보존된 LightRAG v3 구현 — 현재 서버 라우터에는 등록하지 않음 |
 | `app/light/v4/**` | 활성 LightRAG v4 업무일지 query/index API |
 | `app/client/langfuse_client.py`, `tests/test_langfuse_client.py` | LightRAG v4 요청 단위 Langfuse/Gemini 관측과 비밀정보·기능 범위 필터 |
 | `app/light/v4/service/worklog_team_scope.py`, `tests/test_light_worklog_team_scope.py` | 팀 workspace 검색 사전 격리·처리 상태와 최신 업무 DB 문맥 조회 |
 | `app/light/v4/store/worklog_custom_kg_tracking.py`, `tests/test_light_worklog_custom_kg_tracking.py` | 확정 KG 문서 삭제 추적·공유 노드 복원 |
 | `app/light/v4/service/lightrag_adapter.py`, `tests/test_light_worklog_pg_*.py` | 기본 PG 저장소 설정·workspace 검증·색인 팀 소유권 |
-| `app/task/light_worklog_tasks.py`, `app/task/worker_runner.py`, `app/store/worklog_index_result_store.py`, `app/service/worklog_index_result_delivery.py`, `tests/test_light_worklog_tasks.py`, `tests/test_worklog_index_result_store.py`, `tests/test_worklog_index_result_delivery.py`, `tests/test_light_worker_runtime_integration.py` | 색인 실행 기한·시작 승인 재시도·AI 결과 보관·콜백 재전송·워커 복구 |
+| `app/task/light_worklog_tasks.py`, `app/task/worker_runner.py`, `app/store/worklog_index_result_store.py`, `app/service/worklog_index_result_delivery.py`, `tests/test_light_worklog_tasks.py`, `tests/test_worklog_index_result_store.py`, `tests/test_worklog_index_result_delivery.py`, `tests/test_light_worker_runtime_integration.py` | 색인 실행·보상·AI 결과 보관·콜백 재전송·워커 복구 |
+| `app/service/ai_task_executor.py`, `app/service/ai_task_result_delivery.py`, `app/store/ai_task_result_store.py`, `app/client/ai_task_client.py`, `app/task/task_identity.py` | 요약·태그·파일 요약 작업별 실행·결과 보관·콜백 재전송 |
+| `app/security/internal_token.py` | API→AI 내부 호출 토큰 검증 |
 
 ## 공유 파일과 수정 규칙
 

@@ -1,17 +1,32 @@
 import asyncio
+import json
+import multiprocessing
+import os
+from pathlib import Path
+import time
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+import httpx
 
 from app.config.settings import settings
 from app.service.worklog_index_result_delivery import report_stored_result, deliver_pending_results_once
 from app.store.worklog_index_result_store import persist_light_index_result, find_pending_light_index_result
 
-
 @pytest.fixture(autouse=True)
 def isolated_result_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "worklog_light_index_result_dir", tmp_path)
+
+
+@pytest.mark.parametrize("status, retained", [(400, False), (422, False), (408, True), (429, True), (500, True)])
+def test_http_failure_retention(tmp_path, status, retained):
+    record = asyncio.run(persist_light_index_result(101, str(uuid4()), str(uuid4()), "COMPLETED"))
+    client = AsyncMock()
+    response = httpx.Response(status, request=httpx.Request("POST", "https://example.test"))
+    client.report_result.side_effect = httpx.HTTPStatusError("failure", request=response.request, response=response)
+    assert asyncio.run(report_stored_result(record, client)) is False
+    assert (tmp_path / record.filename).exists() is retained
 
 
 def test_failed_callback_keeps_result_and_only_success_acknowledges(tmp_path):
@@ -24,6 +39,17 @@ def test_failed_callback_keeps_result_and_only_success_acknowledges(tmp_path):
     assert asyncio.run(report_stored_result(record, client)) is True
     assert not (tmp_path / record.filename).exists()
 
+
+def test_callback_retries_without_reexecuting_index_and_keeps_result(tmp_path):
+    record = asyncio.run(persist_light_index_result(101, str(uuid4()), str(uuid4()), "COMPLETED"))
+    client = AsyncMock()
+    client.report_result.side_effect = OSError("API unavailable")
+
+    for _ in range(6):
+        assert asyncio.run(report_stored_result(record, client)) is False
+
+    assert client.report_result.await_count == 6
+    assert (tmp_path / record.filename).exists()
 
 def test_cancelled_callback_never_acknowledges(tmp_path):
     record = asyncio.run(persist_light_index_result(101, str(uuid4()), str(uuid4()), "COMPLETED"))

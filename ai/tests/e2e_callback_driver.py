@@ -29,7 +29,7 @@ async def run(args: argparse.Namespace) -> dict[str, bool | int]:
             if args.mode != "result":
                 execute = await client.report_start(args.worklog_id, str(args.request_id), str(args.execution_id))
                 result["execute"] = execute
-                if not execute or args.mode == "start":
+                if execute is not True or args.mode == "start":
                     assert args.expected_http_status == 200
                     return result
             await client.report_result(
