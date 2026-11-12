@@ -1,15 +1,15 @@
 from importlib import import_module
+from importlib.util import find_spec
 
 from app.router import api_router
 
 
-def test_v3_and_v4_worklog_implementations_are_preserved_separately() -> None:
-    v3 = import_module("app.light.v3.service.worklog_index_service")
+def test_only_v4_worklog_implementation_remains() -> None:
     v4 = import_module("app.light.v4.service.worklog_index_service")
 
-    assert v3.LightWorklogIndexService is not v4.LightWorklogIndexService
-    assert v3.LightWorklogIndexService.__module__.startswith("app.light.v3.")
     assert v4.LightWorklogIndexService.__module__.startswith("app.light.v4.")
+    # v3는 삭제됐다. 차이 기록: docs/ai/lightrag-v3-v4-differences.md
+    assert find_spec("app.light.v3") is None
 
 
 def test_only_v4_worklog_routes_are_registered() -> None:
