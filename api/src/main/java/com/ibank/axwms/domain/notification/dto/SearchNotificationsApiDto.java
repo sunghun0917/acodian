@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.time.LocalDateTime;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -75,8 +76,19 @@ public final class SearchNotificationsApiDto {
                 @Schema(description = "읽은 시각")
                 LocalDateTime readAt,
                 @Schema(description = "알림 생성 시각")
-                LocalDateTime createdAt
+                LocalDateTime createdAt,
+                UUID retryRequestId,
+                Boolean retryable,
+                Boolean targetDeleted
         ) {
+
+            /** AI 작업 식별자가 없는 기존 알림을 재시도 불가 항목으로 표현한다. */
+            public Item(Long notificationId, String notificationType, String title, String content,
+                        String referenceType, Long referenceId, Long departmentId, Long teamId,
+                        Boolean isRead, LocalDateTime readAt, LocalDateTime createdAt) {
+                this(notificationId, notificationType, title, content, referenceType, referenceId, departmentId,
+                        teamId, isRead, readAt, createdAt, null, false, false);
+            }
 
             /** repository projection 한 행을 알림 목록 응답 항목으로 변환한다. */
             public static Item from(NotificationSearchProjection projection) {
@@ -91,7 +103,10 @@ public final class SearchNotificationsApiDto {
                         projection.teamId(),
                         projection.isRead(),
                         projection.readAt(),
-                        projection.createdAt()
+                        projection.createdAt(),
+                        projection.retryRequestId(),
+                        projection.retryable(),
+                        projection.targetDeleted()
                 );
             }
         }

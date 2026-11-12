@@ -71,25 +71,24 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
     @Autowired
     private WorklogRepository worklogRepository;
     @Autowired
-    private WorklogAiPostProcessOutboxRepository registrationOutbox;
-    @Autowired
     private WorklogLightOutboxRepository mutationOutbox;
     @Autowired
-    private WorklogAiPostProcessOutboxWorker registrationWorker;
-    @Autowired
     private LettuceConnectionFactory redisConnectionFactory;
+    @Autowired
+    private InternalWorklogLightIndexService lightIndexService;
 
     /** 전용 Testcontainers DB만 정리하고 스케줄러와의 경쟁은 긴 폴링 주기로 차단한다. */
     @BeforeEach
     void clearOutboxes() {
+        // 격리 DB에서 이전 사례의 물리 실행이 종료된 경계를 모사한다.
+        jdbcTemplate.update("UPDATE tb_worklog SET light_index_status = 'UNKNOWN' WHERE light_index_status = 'RUNNING'");
         jdbcTemplate.execute("TRUNCATE TABLE tb_worklog_ai_post_process_outbox, tb_worklog_light_outbox");
     }
 
     @Test
-    @DisplayName("실제 AI 클라이언트 HTTP 완료 콜백이 등록 색인을 확정하고 후처리 Outbox를 정리한다")
+    @DisplayName("실제 AI 클라이언트 HTTP 완료 콜백이 최신 색인을 확정한다")
     void actual_python_callback_completes_registration() throws Exception {
         Fixture fixture = seedWorklog();
-        registrationOutbox.enqueue(event(fixture));
         mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
         UUID request = currentRequest(fixture.worklog().getId());
         UUID execution = UUID.randomUUID();
@@ -97,13 +96,8 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
         assertThat(callback(fixture.worklog().getId(), request, execution, "COMPLETED")).contains("\"execute\":true");
 
         assertThat(lightState(fixture.worklog().getId())).isEqualTo("COMPLETED");
-        assertThat(registrationWorker.processOne(fixture.worklog().getId())).isTrue();
-        assertThat(registrationCount(fixture.worklog().getId())).isZero();
-        assertThat(worklogRepository.findById(fixture.worklog().getId()).orElseThrow().getAiProcessingStatus())
-                .isEqualTo(AiProcessingStatus.COMPLETED);
         assertThat(driver(fixture.worklog().getId(), request, execution, "COMPLETED", "result", INTERNAL_TOKEN, 200))
                 .contains("\"httpStatus\":200");
-        assertThat(registrationCount(fixture.worklog().getId())).isZero();
     }
 
     @ParameterizedTest
@@ -131,19 +125,14 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
     void actual_failed_callback_preserves_manual_recovery() throws Exception {
         Fixture fixture = seedWorklog();
         Long id = fixture.worklog().getId();
-        registrationOutbox.enqueue(event(fixture));
         mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
         UUID request = currentRequest(id);
         UUID execution = UUID.randomUUID();
         callback(id, request, execution, "FAILED");
-        assertThat(registrationWorker.processOne(id)).isTrue();
 
         driver(id, request, execution, "COMPLETED", "result", INTERNAL_TOKEN, 200);
 
         assertThat(lightState(id)).isEqualTo("FAILED");
-        assertThat(worklogRepository.findById(id).orElseThrow().getAiProcessingStatus()).isEqualTo(AiProcessingStatus.FAILED);
-        assertThat(registrationWorker.processOne(id)).isFalse();
-        assertThat(registrationCount(id)).isEqualTo(1);
         assertThat(callback(id, request, UUID.randomUUID(), "COMPLETED")).contains("\"execute\":false");
     }
 
@@ -184,7 +173,6 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
         Fixture fixture = seedWorklog();
         Long id = fixture.worklog().getId();
         if ("INDEX".equals(operation)) {
-            registrationOutbox.enqueue(event(fixture));
             mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
         } else {
             if ("DELETE".equals(operation)) {
@@ -202,12 +190,7 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
                 SELECT light_index_execution_id IS NOT NULL AND light_index_completed_at IS NOT NULL
                 FROM tb_worklog WHERE worklog_id = ?
                 """, Boolean.class, id)).isTrue();
-        if ("INDEX".equals(operation)) {
-            assertThat(registrationWorker.processOne(id)).isTrue();
-            assertThat(registrationCount(id)).isZero();
-        } else {
-            assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox WHERE worklog_id = ?", Integer.class, id)).isZero();
-        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox WHERE worklog_id = ?", Integer.class, id)).isZero();
     }
 
     @ParameterizedTest
@@ -216,26 +199,20 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
     void callback_retry_does_not_repeat_indexing(String status) throws Exception {
         Fixture fixture = seedWorklog();
         Long id = fixture.worklog().getId();
-        registrationOutbox.enqueue(event(fixture));
         mutationOutbox.enqueue(fixture.worklog().getId(), "INDEX");
 
         String result = driver(id, currentRequest(id), UUID.randomUUID(), status, "pipeline-retry", INTERNAL_TOKEN, 200, "INDEX");
 
         assertThat(result).contains("\"httpStatus\":202", "\"indexCalls\":1", "\"callbackRetried\":true");
         assertThat(lightState(id)).isEqualTo(status);
-        assertThat(registrationWorker.processOne(id)).isTrue();
-        if ("COMPLETED".equals(status)) {
-            assertThat(registrationCount(id)).isZero();
-        } else {
-            assertThat(registrationCount(id)).isEqualTo(1);
-            assertThat(registrationWorker.processOne(id)).isFalse();
-            assertThat(worklogRepository.findById(id).orElseThrow().getAiProcessingStatus()).isEqualTo(AiProcessingStatus.FAILED);
-        }
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox WHERE worklog_id = ?", Integer.class, id))
+                .isEqualTo("COMPLETED".equals(status) ? 0 : 1);
     }
 
     /** 외부 AI 연산 없이 콜백 경계의 실제 소켓·보안·DB 처리를 검증한다. */
     private String callback(Long id, UUID request, UUID execution, String status) throws Exception {
-        return driver(id, request, execution, status, "complete", INTERNAL_TOKEN, 200);
+        String response = driver(id, request, execution, status, "complete", INTERNAL_TOKEN, 200);
+        return response;
     }
 
     /** AI에는 테스트 서버 주소·토큰만 전달하고 DB는 접근 불가능한 주소로 격리한다. */
@@ -245,6 +222,7 @@ class WorklogLightCallbackE2ETest extends IntegrationTestSupport {
 
     /** Testcontainers Redis 외의 브로커에 접근하지 않고 생산 태스크의 실제 큐 처리를 검증한다. */
     private String driver(Long id, UUID request, UUID execution, String status, String mode, String token, int expectedStatus, String operation) throws Exception {
+        mutationOutbox.claim(id, UUID.randomUUID());
         Path working = Path.of(System.getProperty("user.dir")).toAbsolutePath();
         Path repo = working.getFileName().toString().equals("api") ? working.getParent() : working;
         ProcessBuilder builder = new ProcessBuilder(System.getenv("WORKLOG_CALLBACK_E2E_PYTHON"),

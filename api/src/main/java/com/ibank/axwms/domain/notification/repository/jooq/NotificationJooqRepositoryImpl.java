@@ -117,7 +117,10 @@ public class NotificationJooqRepositoryImpl implements NotificationJooqRepositor
                         TB_NOTIFICATION.TEAM_ID,
                         TB_NOTIFICATION.IS_READ,
                         TB_NOTIFICATION.READ_AT,
-                        TB_NOTIFICATION.CREATED_AT
+                        TB_NOTIFICATION.CREATED_AT,
+                        NotificationSearchProjection.RETRY_REQUEST_ID,
+                        NotificationSearchProjection.RETRYABLE,
+                        NotificationSearchProjection.TARGET_DELETED
                 )
                 .from(TB_NOTIFICATION)
                 .where(condition)

@@ -15,6 +15,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Entity
 @Table(name = "tb_notification")
@@ -64,6 +65,46 @@ public class Notification {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
+
+    @Column(name = "ai_request_id")
+    private UUID aiRequestId;
+
+    @Column(name = "ai_task_kind", length = 20)
+    private String aiTaskKind;
+
+    @Column(name = "ai_target_id")
+    private Long aiTargetId;
+
+    @Column(name = "ai_result", length = 30)
+    private String aiResult;
+
+    /** 작업별 알림은 생성 당시 제목과 요청 식별자를 보존하여 이후 재시도 대상을 판별한다. */
+    public static Notification createAiTaskResult(Long userId, Long departmentId, Long teamId, Long worklogId,
+                                                   String worklogTitle, UUID requestId, String taskKind,
+                                                   Long targetId, String result) {
+        String label = switch (taskKind) {
+            case "SUMMARY" -> "요약";
+            case "TAG" -> "태그";
+            case "FILE_SUMMARY" -> "파일 요약";
+            case "INDEX" -> "색인";
+            case "REINDEX" -> "재색인";
+            case "DELETE" -> "색인 삭제";
+            default -> throw new IllegalArgumentException("Invalid AI task kind");
+        };
+        if (!("COMPLETED".equals(result) || "FAILED".equals(result))) {
+            throw new IllegalArgumentException("Invalid AI task result");
+        }
+        String outcome = "COMPLETED".equals(result) ? "완료" : "실패";
+        String action = "COMPLETED".equals(result) ? "완료되었습니다." : "실패했습니다.";
+        Notification notification = create(userId, departmentId, teamId, NotificationType.WORKLOG_AI_TASK_RESULT.name(),
+                "AI " + label + " " + outcome, "업무일지 '" + worklogTitle + "'의 " + label + " 작업이 " + action,
+                NotificationReferenceType.WORKLOG.name(), worklogId, false, null);
+        notification.aiRequestId = requestId;
+        notification.aiTaskKind = taskKind;
+        notification.aiTargetId = targetId;
+        notification.aiResult = result;
+        return notification;
+    }
 
     /**
      * D-3 업무 알림의 중복 방지 identity 가 엔티티 생성 시점부터 같은 값으로 저장되게 한다.

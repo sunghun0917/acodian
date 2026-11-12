@@ -27,9 +27,13 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private org.springframework.transaction.support.TransactionTemplate transaction;
+
+    @Autowired
     private WorklogLightOutboxRepository repository;
 
     private final WorklogLightIndexClient client = mock(WorklogLightIndexClient.class);
+    private final InternalWorklogLightIndexService indexService = mock(InternalWorklogLightIndexService.class);
     private WorklogLightOutboxWorker worker;
 
     @MockitoBean
@@ -39,7 +43,11 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
     @BeforeEach
     void setUp() {
         jdbcTemplate.execute("TRUNCATE TABLE tb_worklog_light_outbox");
-        worker = new WorklogLightOutboxWorker(repository, client);
+        worker = new WorklogLightOutboxWorker(repository, client, indexService);
+        org.mockito.Mockito.doAnswer(call -> {
+            repository.fail(call.getArgument(0), call.getArgument(1));
+            return null;
+        }).when(indexService).deliveryFailed(any(), any());
     }
 
     @Test
@@ -66,17 +74,19 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
 
     @Test
     @DisplayName("lease 만료 후 재선점되면 이전 선점의 접수·실패 처리는 현재 선점을 변경하지 않는다")
-    void expired_claim_cannot_change_reclaimed_job() {
+    void expired_claim_cannot_change_replacement_request() {
         repository.enqueue(501L, "REINDEX");
         var stale = repository.claim(501L, UUID.randomUUID()).getFirst();
         jdbcTemplate.update("UPDATE tb_worklog_light_outbox SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE worklog_id = 501");
+        assertThat(repository.claim(501L, UUID.randomUUID())).isEmpty();
+        repository.enqueue(501L, "REINDEX");
         var current = repository.claim(501L, UUID.randomUUID()).getFirst();
 
         repository.awaitResult(stale);
         repository.fail(stale, "obsolete failure");
 
         assertThat(jdbcTemplate.queryForObject("""
-                SELECT claim_token = ? AND attempts = 0 AND last_error IS NULL
+                SELECT claim_token = ? AND attempts = 1 AND last_error IS NULL
                     AND lease_until > CURRENT_TIMESTAMP AND next_attempt_at <= CURRENT_TIMESTAMP
                 FROM tb_worklog_light_outbox WHERE worklog_id = 501
                 """, Boolean.class, current.token())).isTrue();
@@ -131,4 +141,36 @@ class WorklogLightOutboxIntegrationTest extends IntegrationTestSupport {
         assertThat(repository.claim(null, UUID.randomUUID())).isEmpty();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM tb_worklog_light_outbox", Integer.class)).isEqualTo(1);
     }
+    @Test
+    void latestIntentKeepsOneRowIncreasingRevisionAndDeletePriority() {
+        repository.enqueue(501L, "INDEX");
+        UUID first = jdbcTemplate.queryForObject("SELECT request_id FROM tb_worklog_light_outbox WHERE worklog_id = 501", UUID.class);
+        repository.enqueue(501L, "REINDEX");
+        assertThat(jdbcTemplate.queryForObject("SELECT operation FROM tb_worklog_light_outbox WHERE worklog_id = 501", String.class)).isEqualTo("REINDEX");
+        repository.enqueue(501L, "DELETE");
+        repository.enqueue(501L, "INDEX");
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM tb_worklog_light_outbox WHERE worklog_id = 501", Integer.class)).isEqualTo(1);
+        var latest = jdbcTemplate.queryForMap("SELECT operation, revision, request_id, attempts FROM tb_worklog_light_outbox WHERE worklog_id = 501");
+        assertThat(latest.get("operation")).isEqualTo("DELETE");
+        assertThat(latest.get("revision")).isEqualTo(4L);
+        assertThat(latest.get("request_id")).isNotEqualTo(first);
+        assertThat(latest.get("attempts")).isEqualTo(0);
+    }
+
+    @Test
+    void lockedWorklogIsSkippedWithoutBlockingOtherWorklog() {
+        repository.enqueue(601L, "INDEX");
+        repository.enqueue(602L, "DELETE");
+        transaction.executeWithoutResult(ignored -> {
+            jdbcTemplate.queryForList("SELECT worklog_id FROM tb_worklog_light_outbox WHERE worklog_id = 601 FOR UPDATE");
+            try (var pool = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+                var claims = pool.submit(() -> repository.claim(null, UUID.randomUUID()))
+                        .get(3, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(claims).singleElement().satisfies(claim -> assertThat(claim.worklogId()).isEqualTo(602L));
+            } catch (Exception exception) {
+                throw new AssertionError("잠긴 업무가 다른 업무 선점을 막았습니다", exception);
+            }
+        });
+    }
+
 }

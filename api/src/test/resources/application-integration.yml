@@ -1,3 +1,8 @@
 # Integration profile:
 # - enable JPA/Flyway/DataSource/Redis auto-configuration
 # - rely on Testcontainers ServiceConnection wiring from IntegrationTestSupport
+ai:
+  worklog-post-process:
+    outbox-poll-delay-ms: 3600000
+  worklog-light-index:
+    outbox-poll-delay-ms: 3600000

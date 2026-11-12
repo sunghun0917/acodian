@@ -82,11 +82,13 @@ ai:
     base-url: ${AI_FILE_SUMMARY_BASE_URL:http://localhost:8000/ai}
     connect-timeout: ${AI_FILE_SUMMARY_CONNECT_TIMEOUT:2s}
     read-timeout: ${AI_FILE_SUMMARY_READ_TIMEOUT:3s}
+    internal-token: ${AI_INTERNAL_TOKEN:}
   worklog-pipeline:
     enabled: ${AI_WORKLOG_PIPELINE_ENABLED:true}
     base-url: ${AI_WORKLOG_PIPELINE_BASE_URL:http://localhost:8000/ai}
     connect-timeout: ${AI_WORKLOG_PIPELINE_CONNECT_TIMEOUT:2s}
     read-timeout: ${AI_WORKLOG_PIPELINE_READ_TIMEOUT:3s}
+    internal-token: ${AI_INTERNAL_TOKEN:}
   worklog-polish:
     base-url: ${AI_WORKLOG_POLISH_BASE_URL:http://localhost:8000/ai}
     connect-timeout: ${AI_WORKLOG_POLISH_CONNECT_TIMEOUT:2s}
@@ -96,6 +98,10 @@ ai:
     connect-timeout: ${AI_WORKLOG_LIGHT_INDEX_CONNECT_TIMEOUT:2s}
     read-timeout: ${AI_WORKLOG_LIGHT_INDEX_READ_TIMEOUT:300s}
     internal-token: ${AI_INTERNAL_TOKEN:}
+  # 선점부터 결과까지 hard-limit + 60초의 단일 lease를 사용한다.
+  task-execution-budget:
+    hard-limit: ${CELERY_TASK_TIME_LIMIT_SECONDS:540}
+    max-attempts: ${AI_TASK_MAX_ATTEMPTS:4}
 
 notification:
   worklog-overdue-reminder:

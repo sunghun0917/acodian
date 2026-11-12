@@ -1,6 +1,7 @@
 package com.ibank.axwms.domain.worklog.controller;
 
 import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
+import com.ibank.axwms.domain.worklog.dto.InternalWorklogLightIndexApiDto.StartResponse;
 import com.ibank.axwms.domain.worklog.service.InternalWorklogLightIndexService;
 import com.ibank.axwms.global.error.GlobalExceptionHandler;
 import com.ibank.axwms.global.response.GlobalResponseAdvice;
@@ -20,9 +21,14 @@ class InternalWorklogLightIndexControllerTest {
     @Test
     void start_returns_execute_and_result_returns_empty_response() throws Exception {
         when(service.start(any(), any(), any())).thenReturn(true);
+        when(service.attemptFailed(any(), any(), any())).thenReturn(true);
         mvc("secret").perform(post("/internal/worklogs/501/light-index/start")
                 .header("X-AI-Internal-Token", "secret").contentType(MediaType.APPLICATION_JSON).content("{" + IDS + "}"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.execute").value(true));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.execute").value(true))
+                .andExpect(jsonPath("$.decision").doesNotExist());
+        mvc("secret").perform(post("/internal/worklogs/501/light-index/attempt-failed")
+                .header("X-AI-Internal-Token", "secret").contentType(MediaType.APPLICATION_JSON).content("{" + IDS + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.accepted").value(true));
         mvc("secret").perform(post("/internal/worklogs/501/light-index/result")
                 .header("X-AI-Internal-Token", "secret").contentType(MediaType.APPLICATION_JSON)
                 .content("{" + IDS + ",\"status\":\"COMPLETED\",\"error\":null}"))
@@ -32,8 +38,8 @@ class InternalWorklogLightIndexControllerTest {
 
     @Test
     void both_callbacks_require_matching_nonempty_configured_token() throws Exception {
-        for (String operation : new String[]{"start", "result"}) {
-            String body = "{" + IDS + (operation.equals("result") ? ",\"status\":\"FAILED\"" : "") + "}";
+        for (String operation : new String[]{"start", "result", "attempt-failed"}) {
+            String body = "{" + IDS + (operation.equals("result") ? ",\"status\":\"FAILED\"" : operation.equals("execution-end") ? ",\"epoch\":1,\"outcome\":\"DRAINED\"" : "") + "}";
             for (String configured : new String[]{"secret", "", " "}) {
                 for (String sent : new String[]{"", "wrong"}) {
                     var request = post("/internal/worklogs/501/light-index/" + operation)
@@ -55,6 +61,10 @@ class InternalWorklogLightIndexControllerTest {
         }
         verifyNoInteractions(service);
     }
+
+
+
+
 
     @Test
     void rejects_nonpositive_worklog_id() throws Exception {

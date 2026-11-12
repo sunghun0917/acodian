@@ -27,6 +27,8 @@ import com.ibank.axwms.domain.worklog.event.WorklogLightDeleteRequestedEvent;
 import com.ibank.axwms.domain.worklog.external.AiWorklogLightIndexProperties;
 import com.ibank.axwms.domain.worklog.external.WorklogPolishClient;
 import com.ibank.axwms.domain.worklog.policy.WorklogStatusPolicy;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiTaskRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogDependencyRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogStatusHistoryRepository;
@@ -90,6 +92,9 @@ class WorklogServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private WorklogPolishClient worklogPolishClient;
     @Mock private AiWorklogLightIndexProperties worklogLightIndexProperties;
+    @Mock private WorklogAiTaskRetryService worklogAiTaskRetryService;
+    @Mock private WorklogAiTaskRepository worklogAiTaskRepository;
+    @Mock private WorklogAiPostProcessOutboxRepository worklogAiTaskLocks;
 
     @InjectMocks private WorklogService worklogService;
 
@@ -480,6 +485,8 @@ class WorklogServiceTest {
         UpdateWorklogApiDto.Request request = updateRequest(WorklogStatus.COMPLETED);
 
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
+        // 본문이 바뀌는 수정이라 진행 중 AI 작업 교체 snapshot 에 팀의 부서를 함께 기록한다.
+        given(teamService.getTeamOrThrow(TEAM_ID)).willReturn(sampleTeam());
         given(worklogStatusPolicy.canTransition(WorklogStatus.IN_PROGRESS, WorklogStatus.COMPLETED)).willReturn(true);
 
         // when
@@ -622,21 +629,13 @@ class WorklogServiceTest {
         Worklog worklog = savedWorklog(WorklogStatus.IN_PROGRESS);
         worklog.failAiProcessing();
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
-        given(teamService.getTeamOrThrow(TEAM_ID)).willReturn(sampleTeam());
 
         // when
         worklogService.retryAiSummary(principal, WORKLOG_ID);
 
         // then
-        assertThat(worklog.getAiProcessingStatus()).isEqualTo(AiProcessingStatus.PROCESSING);
-        ArgumentCaptor<WorklogAiPostProcessRequestedEvent> eventCaptor =
-                ArgumentCaptor.forClass(WorklogAiPostProcessRequestedEvent.class);
-        verify(eventPublisher).publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getValue().worklogId()).isEqualTo(WORKLOG_ID);
-        assertThat(eventCaptor.getValue().authorId()).isEqualTo(USER_ID);
-        assertThat(eventCaptor.getValue().teamId()).isEqualTo(TEAM_ID);
-        assertThat(eventCaptor.getValue().departmentId()).isEqualTo(DEPARTMENT_ID);
-        assertThat(eventCaptor.getValue().files()).isEmpty();
+        verify(worklogAiTaskRetryService).retryCurrentSummary(principal, WORKLOG_ID);
+        verify(eventPublisher, never()).publishEvent(any(Object.class));
     }
 
     @Test
@@ -716,6 +715,8 @@ class WorklogServiceTest {
         List<MultipartFile> newFiles = sampleFiles();
 
         given(worklogRepository.findById(WORKLOG_ID)).willReturn(Optional.of(worklog));
+        // 본문이 바뀌는 수정이라 진행 중 AI 작업 교체 snapshot 에 팀의 부서를 함께 기록한다.
+        given(teamService.getTeamOrThrow(TEAM_ID)).willReturn(sampleTeam());
 
         // when
         worklogService.updateWorklog(principal, WORKLOG_ID, request, newFiles);

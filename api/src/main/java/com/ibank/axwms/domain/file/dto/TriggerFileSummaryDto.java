@@ -1,6 +1,7 @@
 package com.ibank.axwms.domain.file.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import java.util.UUID;
 
 /**
  * AI 서버 {@code POST /summarize/files} 트리거 페이로드.
@@ -24,7 +25,16 @@ public final class TriggerFileSummaryDto {
             String originalName,
 
             @Schema(description = "파일 확장자 (소문자, dot 제외)")
-            String fileExtension
+            String fileExtension,
+            UUID requestId,
+            String inputHash
     ) {
+        /** 기존 통합 등록 경로는 식별자를 제공하지 않는다. */
+        public Request(Long fileId, Long worklogId, String storageKey, String originalName, String fileExtension) {
+            this(fileId, worklogId, storageKey, originalName, fileExtension, null, null);
+        }
     }
+
+    /** 파일별 큐 접수를 동일 요청으로 확인하기 위한 응답이다. */
+    public record Response(Long fileId, UUID requestId, String summaryTaskId, String status) {}
 }

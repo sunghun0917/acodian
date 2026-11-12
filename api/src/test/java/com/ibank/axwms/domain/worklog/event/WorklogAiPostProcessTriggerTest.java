@@ -1,8 +1,8 @@
 package com.ibank.axwms.domain.worklog.event;
 
-import com.ibank.axwms.domain.worklog.repository.WorklogAiPostProcessOutboxRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogLightOutboxRepository;
 import com.ibank.axwms.domain.worklog.repository.WorklogRepository;
+import com.ibank.axwms.domain.worklog.repository.WorklogAiTaskRepository;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -12,26 +12,27 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class WorklogAiPostProcessTriggerTest {
-    private final WorklogAiPostProcessOutboxRepository general = mock(WorklogAiPostProcessOutboxRepository.class);
     private final WorklogRepository worklogs = mock(WorklogRepository.class);
     private final WorklogLightOutboxRepository light = mock(WorklogLightOutboxRepository.class);
-    private final WorklogAiPostProcessTrigger trigger = new WorklogAiPostProcessTrigger(general, worklogs, light);
+    private final WorklogAiTaskRepository tasks = mock(WorklogAiTaskRepository.class);
+    private final WorklogAiPostProcessTrigger trigger = new WorklogAiPostProcessTrigger(tasks, worklogs, light);
 
     @Test
     void active_registration_enqueues_initial_index_in_light_outbox() {
         var event = event();
-        when(general.enqueue(event)).thenReturn(true);
+        when(tasks.enqueueInitialTasks(event)).thenReturn(true);
 
         trigger.onCommit(event);
 
         verify(worklogs).flush();
+        verify(tasks).enqueueInitialTasks(event);
         verify(light).enqueue(501L, "INDEX");
     }
 
     @Test
     void queued_retry_does_not_replace_current_index_before_activation() {
         var event = event();
-        when(general.enqueue(event)).thenReturn(false);
+        when(tasks.enqueueInitialTasks(event)).thenReturn(false);
 
         trigger.onCommit(event);
 

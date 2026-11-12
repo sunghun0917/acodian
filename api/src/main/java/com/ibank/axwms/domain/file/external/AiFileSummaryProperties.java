@@ -1,6 +1,7 @@
 package com.ibank.axwms.domain.file.external;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.time.Duration;
 
@@ -13,17 +14,24 @@ public record AiFileSummaryProperties(
         boolean enabled,
         String baseUrl,
         Duration connectTimeout,
-        Duration readTimeout
+        Duration readTimeout,
+        String internalToken
 ) {
 
     private static final String DEFAULT_BASE_URL = "http://localhost:8000/ai";
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(3);
 
+    @ConstructorBinding
     public AiFileSummaryProperties {
         baseUrl = normalizeBaseUrl(baseUrl);
         connectTimeout = connectTimeout == null ? DEFAULT_CONNECT_TIMEOUT : connectTimeout;
         readTimeout = readTimeout == null ? DEFAULT_READ_TIMEOUT : readTimeout;
+    }
+
+    /** 토큰 없는 구 생성자는 실제 내부 요청을 전송하지 않는다. */
+    public AiFileSummaryProperties(boolean enabled, String baseUrl, Duration connectTimeout, Duration readTimeout) {
+        this(enabled, baseUrl, connectTimeout, readTimeout, null);
     }
 
     /** 누락된 baseUrl 은 로컬 AI 서버 기본 prefix 로 대체하고 trailing slash 를 제거한다. */
