@@ -99,7 +99,7 @@ flowchart LR
     - **첫 응답 시간 (TTFT)**: `8,295ms` → **`2,450ms` (70.5% 감소)**
     - *(※ 전체 트래픽의 지연 분포를 나타내는 수치는 아닙니다.)*
 - **관련 코드 및 산출물**:
-  - [병렬 검색 커밋](https://github.com/sunghun0917/acodian/commit/7b2e16a8) · [SSE 커밋](https://github.com/sunghun0917/acodian/commit/ed97985a) · [PR #12](https://github.com/sunghun0917/acodian/pull/12) · [측정 보고서](docs/ai/report/rag-optimization-and-evaluation-report.md)
+  - [병렬 검색 커밋](https://github.com/sunghun0917/acodian/commit/7b2e16a8) · [SSE 커밋](https://github.com/sunghun0917/acodian/commit/ed97985a) · [PR #12](https://github.com/sunghun0917/acodian/pull/12) · [측정 보고서](docs/ai/report/rag-evaluation/speed-and-ragas-report.md)
 
 ---
 
@@ -121,7 +121,7 @@ flowchart LR
     - **Semantic HIT**: **`388.203ms`**
     - *(※ Spring API를 포함한 사용자 E2E 및 운영 SLA는 아닙니다.)*
 - **관련 코드 및 산출물**:
-  - [권한·캐시 커밋](https://github.com/sunghun0917/acodian/commit/e4659f39) · [PR #13](https://github.com/sunghun0917/acodian/pull/13) · [실임베딩 측정 커밋](https://github.com/sunghun0917/acodian/commit/6938ff21) · [PR #20](https://github.com/sunghun0917/acodian/pull/20) · [원시 표본](docs/ai/report/semantic-cache-real-embedding-raw.json)
+  - [권한·캐시 커밋](https://github.com/sunghun0917/acodian/commit/e4659f39) · [PR #13](https://github.com/sunghun0917/acodian/pull/13) · [실임베딩 측정 커밋](https://github.com/sunghun0917/acodian/commit/6938ff21) · [PR #20](https://github.com/sunghun0917/acodian/pull/20) · [원시 표본](docs/ai/report/rag-cache/semantic-cache-real-embedding-2026-10-11-raw.json)
 
 ---
 
@@ -140,7 +140,7 @@ flowchart LR
 - **정합성 범위**:
   - Outbox 패턴은 **비동기 최종 일관성(Eventual Consistency)**을 따릅니다. DB 커밋 시점부터 워커 반영 및 캐시 버전 갱신 전까지는 새 내용이 즉시 검색되지 않거나 이전 캐시가 반환될 수 있습니다.
 - **관련 코드 및 산출물**:
-  - [증분 재색인 커밋](https://github.com/sunghun0917/acodian/commit/a68fab56) · [부분 실패 방어 커밋](https://github.com/sunghun0917/acodian/commit/23eb59d7) · [PR #14](https://github.com/sunghun0917/acodian/pull/14) · [기술 보고서](docs/ai/report/worklog-rag-cache-and-reindex-report.md)
+  - [증분 재색인 커밋](https://github.com/sunghun0917/acodian/commit/a68fab56) · [부분 실패 방어 커밋](https://github.com/sunghun0917/acodian/commit/23eb59d7) · [PR #14](https://github.com/sunghun0917/acodian/pull/14) · [기술 보고서](docs/ai/report/rag-cache/cache-and-reindex-report-2026-10-06.md)
 
 ---
 
@@ -163,7 +163,7 @@ flowchart LR
 > - 이전 Naive/Mix/Reranker 결과와 `app.light.v4`는 파이프라인·모델·프롬프트·검색 조건이 달라 통제된 A/B 비교가 아니며, 점수 차이를 개별 변경의 인과 효과로 해석하지 않습니다.
 > - 표의 각 행은 관계 부재 질문 6개를 제외한 **Main Overall 44문항 평균**입니다. (관계 부재 답변이 Answer Relevancy 0점 처리되는 왜곡을 방지하기 위해 분리 집계). ([V4 기본 평가](docs/ai/evaluation/v4/results-ragas-gemini-3.8-flash-20260929/report.md) · [V4 리랭커 평가](docs/ai/evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md))
 > - 실제 `app.light.v4`의 **전체 50문항 점수**: Faithfulness **`0.7682`**, Answer Relevancy **`0.8961`**, Context Recall **`0.8617`**
-> - *(※ V4 결과는 실행 중 코드 변경이 감지된 `source_changed` 상태로, 평가 시작 시점 코드 기준이며 최신 작업 트리 전체의 결과를 대변하지 않습니다. [실행 보고서](docs/ai/evaluation/v4/results-current-v4-20261015/report.md) 및 [종합 분석 보고서](docs/ai/report/rag-optimization-and-evaluation-report.md) 참조)*
+> - *(※ V4 결과는 실행 중 코드 변경이 감지된 `source_changed` 상태로, 평가 시작 시점 코드 기준이며 최신 작업 트리 전체의 결과를 대변하지 않습니다. [실행 보고서](docs/ai/evaluation/v4/results-current-v4-20261015/report.md) 및 [종합 분석 보고서](docs/ai/report/rag-evaluation/speed-and-ragas-report.md) 참조)*
 
 - **TEI 리랭킹 도입 여부 판단**:
   - TEI 리랭커 적용 시 Answer Relevancy와 Context Recall은 소폭 향상되었으나, **Faithfulness가 0.9396 → 0.8920으로 하락**.
@@ -192,8 +192,8 @@ flowchart LR
   - 실행 명령어: `cd ai && python -m pytest tests -q`
   - 결과: 2026-10-15 로컬 실행 기준 **458 passed, 2 skipped** (※ `ai/tests/` 범위 검증이며, 로컬 Qdrant payload-index 경고 1건 발생. 실제 Gemini/Redis 벤치마크나 Spring API E2E를 대체하지 않습니다.)
 - **세부 실험 및 벤치마크 보고서**:
-  - [RAG 응답 시간 최적화 보고서](docs/ai/report/rag-optimization-and-evaluation-report.md)
+  - [RAG 응답 시간 최적화 보고서](docs/ai/report/rag-evaluation/speed-and-ragas-report.md)
   - [V4 RAGAS 기본 평가 결과](docs/ai/evaluation/v4/results-ragas-gemini-3.8-flash-20260929/report.md)
   - [V4 리랭커 평가 결과](docs/ai/evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md)
-  - [실임베딩 캐시 성능 측정 보고서](docs/ai/report/semantic-cache-real-embedding-benchmark.md)
-  - [재색인 및 캐시 무효화 기술 보고서](docs/ai/report/worklog-rag-cache-and-reindex-report.md)
+  - [실임베딩 캐시 성능 측정 보고서](docs/ai/report/rag-cache/semantic-cache-real-embedding-2026-10-11.md)
+  - [재색인 및 캐시 무효화 기술 보고서](docs/ai/report/rag-cache/cache-and-reindex-report-2026-10-06.md)

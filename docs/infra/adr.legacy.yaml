@@ -188,7 +188,7 @@
     1) 왜 DinD 가 필요한가 — jOOQ bootstrap-first + Testcontainers 체인
        privileged 의 근본 원인은 "이미지 빌드" 가 아니라 "Gradle 자체가 Docker 를 쓰는 설계" 다.
        api 모듈의 Gradle 빌드는 두 지점에서 Docker daemon 접근을 요구한다.
-       - jOOQ codegen: `docs/api/jooq-codegen-policy.md` 의 bootstrap-first workflow 에 따라
+       - jOOQ codegen: `docs/api/guide/jooq-codegen-policy.md` 의 bootstrap-first workflow 에 따라
          `./gradlew jooqGenerate` 가 실제 `pgvector/pgvector:pg17` 컨테이너를 띄우고
          Flyway migration 을 적용한 뒤 메타데이터를 읽어 generated source 를 만든다.
          `build`/`test`/`bootRun`/`assemble` 도 필요 시 jooqGenerate 를 선행 보장한다.
@@ -280,7 +280,7 @@
          - generated jOOQ source 를 커밋해 CI 에서 `jooqGenerate` 실행을 제거하거나,
            Testcontainers 기반 통합 테스트를 H2 또는 embedded/inmemory 대체재로 전환하거나,
            CI 를 "codegen job(Docker 접근 허용) + 빌드 job(Docker 불필요)" 두 단계로 쪼개 아티팩트로 연결한다.
-         - `docs/api/jooq-codegen-policy.md` 의 운영 모델(bootstrap-first + generated source 비커밋)을 포기하거나 크게 바꿔야 하므로
+         - `docs/api/guide/jooq-codegen-policy.md` 의 운영 모델(bootstrap-first + generated source 비커밋)을 포기하거나 크게 바꿔야 하므로
            보안 요구가 privileged 자체를 금지하는 수준일 때만 고려한다.
 
     세 선택지는 조합 가능하며, 지금 당장 가장 가벼운 실질 완화책은 1번(Runner 분리) 이다. 2번은 1번과 함께 갈 때 의미가 커진다.

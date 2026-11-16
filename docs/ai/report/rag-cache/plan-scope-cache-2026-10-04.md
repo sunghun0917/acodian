@@ -8,7 +8,7 @@
 
 **Tech Stack:** Spring Boot, FastAPI, LightRAG 1.4.10, Redis Open Source 8.10 Search, redis-py 7.4, pytest/JUnit.
 
-**Spec:** `docs/superpowers/specs/2026-10-04-rag-scope-cache-design.md`
+**Spec:** `docs/ai/report/rag-cache/design-scope-cache-2026-10-04.md`
 
 ## Global Constraints
 

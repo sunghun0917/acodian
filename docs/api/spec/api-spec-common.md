@@ -28,8 +28,8 @@
 
 ### 5.1 Upstream inventory canonical
 - **53행 coverage matrix** 의 canonical source 는 아래 순서를 따른다.
-  1. `docs/api/api-springboot-endpoint-checklist.md`
-  2. `docs/api/api-springboot-endpoint-class-mapping.md`
+  1. `docs/api/guide/endpoint-checklist.md`
+  2. `docs/api/guide/endpoint-class-mapping.md`
   3. ERD / ADR / architecture guide
 - `api-spec-index.md` 의 matrix row count 는 현재 index 기준 **53**을 유지한다.
 - checklist/class mapping 의 row identity 는 유지하되, clarified scope 에서 현재 spec path 를 명시적으로 고정한 경우 matrix/display path 는 normalized 표기를 사용할 수 있다.

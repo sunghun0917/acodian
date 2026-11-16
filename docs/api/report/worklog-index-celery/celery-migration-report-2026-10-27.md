@@ -4,8 +4,8 @@
 - **대상**: Spring Boot API & FastAPI AI 업무일지 인덱싱 비동기 아키텍처 전환
 - **작업 브랜치**: `feat/api/outbox-celery`
 - **관련 문서**:
-  - 설계 사양서: `docs/superpowers/specs/2026-10-25-worklog-index-celery-design.md`
-  - 실행 계획서: `docs/superpowers/plans/2026-10-26-worklog-index-celery.md`
+  - 설계 사양서: `docs/api/report/worklog-index-celery/design-celery-2026-10-25.md`
+  - 실행 계획서: `docs/api/report/worklog-index-celery/plan-celery-2026-10-26.md`
   - 정리 계획서: `.omx/callback-ownership-cleanup-plan.md`
 
 ---

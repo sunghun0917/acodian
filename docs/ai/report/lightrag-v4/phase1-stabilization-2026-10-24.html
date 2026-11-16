@@ -24,7 +24,7 @@
     <div class="section-no">EXECUTIVE SUMMARY</div><h2 id="summary-title">핵심 안정화 경로는 검증했으며, 운영 보장은 별도입니다</h2>
     <div class="grid three"><article class="card"><div class="number">201 <small>Created</small></div><p class="stat-label">등록 응답과 Outbox 기록 확인</p><p class="caption">가상 업무 1건 등록. 약 0.906초에 응답하고 원본·Outbox 동시 존재를 확인했습니다.</p></article><article class="card"><div class="number">32.17 <small>초</small></div><p class="stat-label">등록부터 AI 후처리 완료까지</p><p class="caption">전역 COMPLETED·팀 processed, 등록 Outbox 제거까지 확인한 단일 실행 관측값입니다.</p></article><article class="card"><div class="number">4 <small>검색 경로</small></div><p class="stat-label">전사·팀 × 일반·SSE</p><p class="caption">정상 답변과 미완료·삭제 문서 제외를 실제 저장소·모델 연결로 확인했습니다.</p></article></div>
     <div class="note good"><strong>판정:</strong> 확인된 기능·오류 처리 시나리오는 통과했습니다. 다만 강제 종료 복구, 다중 worker, 재색인 중 무공백, 운영 트래픽 전환까지 해결했다고 판단하지 않습니다.</div>
-    <p class="caption">세부 실행 증거: <a href="#execution-evidence">통합 실서버 실행 근거</a> · 처리 흐름: <a href="rag-flow-guide.html">등록·수정·삭제·검색 흐름도</a></p>
+    <p class="caption">세부 실행 증거: <a href="#execution-evidence">통합 실서버 실행 근거</a> · 처리 흐름: <a href="../../guide/rag-flow.html">등록·수정·삭제·검색 흐름도</a></p>
   </section>
 
   <section id="problems" aria-labelledby="problems-title">
@@ -68,14 +68,14 @@
   <section id="implementation" aria-labelledby="implementation-title">
     <div class="section-no">04 / IMPLEMENTATION</div><h2 id="implementation-title">구현 내용과 파일별 책임</h2>
     <div class="table-wrap"><table><thead><tr><th scope="col">파일·영역</th><th scope="col">구현 내용</th><th scope="col">범위·주의점</th></tr></thead><tbody>
-      <tr><th scope="row"><a href="../../../ai/app/light/v4/service/worklog_index_service.py">worklog_index_service.py</a></th><td>문서별 순차 처리·보상, 이전/현재 팀 정리, 전역→팀 쓰기, 소유권, 마지막 완료 게시, 취소 시 보상 대기.</td><td>기본 캐시 객체 생성 제거. 명시적으로 주입한 캐시의 버전 갱신 호환 경로는 유지.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/app/light/v4/service/lightrag_adapter.py">lightrag_adapter.py</a></th><td>완료 상태 저장·읽기 확인, processed 조회의 완료 필터, 청크·상태 임시 보관과 삭제 전 복구, status 없는 full_docs 정리, query 옵션 검증.</td><td>상태 없는 그래프 추적이 남으면 복구 완료로 숨기지 않음. native 내부 동작과 연결되므로 버전 호환 회귀 필요.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/app/light/v4/service/worklog_team_scope.py">worklog_team_scope.py</a></th><td>전사·팀이 함께 사용하는 완료·현재 DB·소유권·팀 native 상태 검증.</td><td>검증은 여러 SQL·저장소 조회. 동일 시점 snapshot이나 revision fencing은 아님.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/app/light/v4/service/worklog_query_service.py">worklog_query_service.py</a></th><td>모든 범위에서 후보 조회 후 DB 문맥으로 생성. 일반/SSE 공통화. 응답 캐시 미사용. 검색 실패 구분. SSE 전체 시간 제한.</td><td>생성 전 검증이며 스트리밍 중 토큰별 권한 재검증은 하지 않음.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/app/light/v4/router/worklog_query.py">query 라우터</a></th><td>기본 query 서비스에서 응답 캐시 생성 제거. 내부 토큰·오류 및 SSE 이벤트 경계 유지.</td><td>새 사용자 인증 체계를 도입한 것은 아님.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/app/light/v4/store/worklog_source_store.py">source store</a> / <a href="../../../ai/app/light/v4/service/worklog_source_row_reader.py">row reader</a></th><td>기존 생존 원본 조회를 재사용하고 재구축용 ID keyset 조회 추가.</td><td>업무일지 is_deleted와 팀 deleted_at을 구분.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/app/util/rebuild_light_worklogs_v4.py">rebuild_light_worklogs_v4.py</a></th><td>별도 세대 재구축, source fingerprint, manifest 원자 기록, 전체 완료·소유권 대조와 ready 판정.</td><td>트래픽 전환·DB 쓰기 동결을 자동 실행하지 않음. 기존 데이터 일괄 COMPLETED 처리 금지.</td></tr>
-      <tr><th scope="row"><a href="../../../ai/benchmarks/semantic_cache_real_embedding.py">캐시 벤치마크</a></th><td>비활성 진입점은 즉시 중단, 도달 불가능한 실행 코드 제거. 과거 결과 검증 helper는 유지.</td><td>캐시 성능 개선을 완료한 것이 아니라 현재 비활성 상태를 명확히 함.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/light/v4/service/worklog_index_service.py">worklog_index_service.py</a></th><td>문서별 순차 처리·보상, 이전/현재 팀 정리, 전역→팀 쓰기, 소유권, 마지막 완료 게시, 취소 시 보상 대기.</td><td>기본 캐시 객체 생성 제거. 명시적으로 주입한 캐시의 버전 갱신 호환 경로는 유지.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/light/v4/service/lightrag_adapter.py">lightrag_adapter.py</a></th><td>완료 상태 저장·읽기 확인, processed 조회의 완료 필터, 청크·상태 임시 보관과 삭제 전 복구, status 없는 full_docs 정리, query 옵션 검증.</td><td>상태 없는 그래프 추적이 남으면 복구 완료로 숨기지 않음. native 내부 동작과 연결되므로 버전 호환 회귀 필요.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/light/v4/service/worklog_team_scope.py">worklog_team_scope.py</a></th><td>전사·팀이 함께 사용하는 완료·현재 DB·소유권·팀 native 상태 검증.</td><td>검증은 여러 SQL·저장소 조회. 동일 시점 snapshot이나 revision fencing은 아님.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/light/v4/service/worklog_query_service.py">worklog_query_service.py</a></th><td>모든 범위에서 후보 조회 후 DB 문맥으로 생성. 일반/SSE 공통화. 응답 캐시 미사용. 검색 실패 구분. SSE 전체 시간 제한.</td><td>생성 전 검증이며 스트리밍 중 토큰별 권한 재검증은 하지 않음.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/light/v4/router/worklog_query.py">query 라우터</a></th><td>기본 query 서비스에서 응답 캐시 생성 제거. 내부 토큰·오류 및 SSE 이벤트 경계 유지.</td><td>새 사용자 인증 체계를 도입한 것은 아님.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/light/v4/store/worklog_source_store.py">source store</a> / <a href="../../../../ai/app/light/v4/service/worklog_source_row_reader.py">row reader</a></th><td>기존 생존 원본 조회를 재사용하고 재구축용 ID keyset 조회 추가.</td><td>업무일지 is_deleted와 팀 deleted_at을 구분.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/app/util/rebuild_light_worklogs_v4.py">rebuild_light_worklogs_v4.py</a></th><td>별도 세대 재구축, source fingerprint, manifest 원자 기록, 전체 완료·소유권 대조와 ready 판정.</td><td>트래픽 전환·DB 쓰기 동결을 자동 실행하지 않음. 기존 데이터 일괄 COMPLETED 처리 금지.</td></tr>
+      <tr><th scope="row"><a href="../../../../ai/benchmarks/semantic_cache_real_embedding.py">캐시 벤치마크</a></th><td>비활성 진입점은 즉시 중단, 도달 불가능한 실행 코드 제거. 과거 결과 검증 helper는 유지.</td><td>캐시 성능 개선을 완료한 것이 아니라 현재 비활성 상태를 명확히 함.</td></tr>
     </tbody></table></div>
     <p class="caption">API Outbox·현재 메모리 락·Custom KG 추적 등 기존 기반을 재사용했습니다. 본 보고서가 API 등록 트랜잭션이나 모든 PG 삭제 보호를 이번 단계에서 새로 작성했다고 주장하지 않습니다.</p>
   </section>
@@ -121,7 +121,7 @@
       <tr><th scope="row"><span class="badge scope">추가 검증</span></th><td>전체 후처리·성능·품질·독립 리뷰</td><td>첨부파일·요약·태그·알림을 포함한 E2E, 다중 문서·팀 부하, 질의 품질 평가, 독립 코드·설계 검토.</td><td>지원 환경 E2E 통과, p95·비용·정확도 근거와 독립 리뷰 미해결 항목 정리.</td></tr>
     </tbody></table></div>
     <div class="note warn"><strong>제안과 구현을 구분합니다.</strong> 위 후속 설계는 다음 단계의 권장 방향입니다. 이번에 영속 Saga 로그, Redis 분산 락, revision fencing, 무공백 세대 교체를 구현한 것은 아닙니다.</div>
-    <p class="caption">전환 상세: <a href="../lightrag-v4-phase1-migration.md">1단계 인덱스 전환 절차</a> · 독립 리뷰는 이전 실행에서 에이전트 사용량 제한으로 완료하지 못했으므로 실서버 통과로 대체 승인하지 않습니다.</p>
+    <p class="caption">전환 상세: <a href="../../guide/lightrag-index-rebuild.md">1단계 인덱스 전환 절차</a> · 독립 리뷰는 이전 실행에서 에이전트 사용량 제한으로 완료하지 못했으므로 실서버 통과로 대체 승인하지 않습니다.</p>
   </section>
 
   <section id="execution-evidence" aria-labelledby="execution-evidence-title">

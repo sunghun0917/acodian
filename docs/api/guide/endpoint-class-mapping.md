@@ -1,7 +1,8 @@
 # AX-WMS Spring Boot `/api` API → 도메인/클래스 매핑
 
 - 기준 문서: `plan/api-design.md`
-- 연계 문서: `docs/api/api-springboot-package-structure-guide.md`
+  - (2026-11-16 확인: 이 파일은 현재 저장소에 없고 git 이력에도 없다. 현재 API 명세의 기준은 [spec/api-spec-index.md](../spec/api-spec-index.md)다.)
+- 연계 문서: `docs/api/guide/package-structure.md`
 - 목적: endpoint/API 기준으로 controller/service/entity/repository ownership을 빠르게 찾을 수 있는 class-level 매핑표를 제공한다.
 - 범위: endpoint status, description, controller/service ownership, 관련 entity/repository/JOOQ 문맥
 - 전제: base package 예시는 `com.ibank.axwms`

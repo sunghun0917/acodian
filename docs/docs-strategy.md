@@ -9,19 +9,19 @@ docs/
 ├── README.md                # 전체 문서 목차
 ├── architecture/            # 통합 아키텍처 가이드 (Markdown 기준, Word 참고)
 ├── database/                # ERD·데이터베이스 설계 초안
-├── api/                     # Spring Boot 규칙·개발 가이드
+├── api/                     # Spring Boot 규칙 (adr.yaml, code-convention.yaml)
+│   ├── guide/               # 개발 가이드 (패키지 구조, 엔드포인트, jOOQ)
 │   ├── spec/                # 도메인별 API 명세와 인덱스
-│   └── report/              # 구현 검증 보고서·측정 원본
+│   └── report/<주제>/       # 작업별 종합 정리(README.md)와 원본 보고서, 측정 원본
 ├── web/                     # Next.js 규칙·디자인·협업 가이드
+│   ├── report/<주제>/       # 작업별 설계서와 구현 계획
 │   └── inho/                # 기존 담당자별 작업·검토 기록
-├── ai/                      # FastAPI·LightRAG 규칙·가이드·조사
-│   ├── evaluation/          # 버전별 평가 데이터·스크립트·실행 결과
-│   └── report/              # 분석 보고서·흐름도·측정 원본
+├── ai/                      # FastAPI·LightRAG 규칙 (adr.yaml, code-convention.yaml)
+│   ├── guide/               # 현재 동작 설명, 운영 절차, 흐름도
+│   ├── evaluation/          # 버전별 평가 데이터, 스크립트, 실행 결과 (경로 유지)
+│   └── report/<주제>/       # 작업별 종합 정리(README.md)와 원본 보고서, 조사, 측정 원본
 ├── infra/                   # 배포·CI/CD·라우팅·Nginx 가이드
 ├── shared/                  # 온보딩·로컬 실행·보안·공통 용어
-├── superpowers/
-│   ├── specs/               # 작업별 설계서
-│   └── plans/               # 작업별 구현 계획
 ├── images/                  # 공용 이미지
 ├── archive/                 # 현재 구현의 기준이 아닌 과거 문서
 ├── docs-strategy.md         # 이 문서
@@ -44,7 +44,7 @@ Word 가이드는 참고 자료다. 현재 API는 Spring Boot이므로 NestJS �
 ## 추가·이동 규칙
 
 1. 새 문서는 담당 영역에 추가한다. 여러 영역에서 함께 사용하는 내용만 `shared/`에 둔다.
-2. API 명세는 `api/spec/`, 보고서와 측정 근거는 해당 영역의 `report/`에 둔다. AI 평가 자료는 `ai/evaluation/`의 기존 버전 구조를 따른다.
+2. API 명세는 `api/spec/`, 개발 가이드와 운영 절차는 `guide/`, 보고서와 측정 근거는 해당 영역의 `report/<주제>/`에 둔다. 주제 폴더의 `README.md`는 그 작업의 종합 정리이며, 원본 보고서를 추가하면 README의 "원본 문서" 목록도 갱신한다. 작업별 설계서와 구현 계획은 `design-<내용>-<날짜>.md`, `plan-<내용>-<날짜>.md` 이름으로 같은 주제 폴더에 둔다. superpowers 스킬이 `docs/superpowers/`에 새로 만든 설계서와 계획서는 작업이 끝나면 해당 주제 폴더로 옮긴다. AI 평가 자료는 `ai/evaluation/`의 기존 버전 구조를 따른다.
 3. 영역 안내와 전체 목차에서 찾을 수 있도록 상대 링크를 추가한다. 폴더는 실제로 분류할 자료가 있을 때만 만든다.
 4. 문서 이동 시 Markdown 링크뿐 아니라 코드 블록·명령·설정·`AGENTS.md`·`CLAUDE.md` 등의 경로 참조도 확인한다. 실행 스크립트가 참조하는 자료는 탐색 편의를 위해 옮기지 않는다.
 5. 파일명·본문은 불필요하게 바꾸지 않는다. 과거 문서나 중복 후보도 확인 없이 삭제·병합하지 않는다.

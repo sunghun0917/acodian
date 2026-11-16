@@ -8,7 +8,7 @@ def test_only_v4_worklog_implementation_remains() -> None:
     v4 = import_module("app.light.v4.service.worklog_index_service")
 
     assert v4.LightWorklogIndexService.__module__.startswith("app.light.v4.")
-    # v3는 삭제됐다. 차이 기록: docs/ai/lightrag-v3-v4-differences.md
+    # v3는 삭제됐다. 차이 기록: docs/ai/report/lightrag-v4/v3-v4-differences.md
     assert find_spec("app.light.v3") is None
 
 

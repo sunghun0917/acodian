@@ -146,10 +146,10 @@ springboot:
       로컬 `build`/`bootRun`/`test`/`assemble` 와 CI는 generated source가 없거나 stale 하면 compile 이전에 `jooqGenerate` 를 선행 보장하는 방향으로 운영한다.
       stale 판정은 migration 파일뿐 아니라 `api/build.gradle`, `api/gradle/jooq-codegen.gradle`, `api/gradle.properties` 같은 codegen 입력 변경도 함께 반영한다.
       Flyway migration을 변경한 개발자는 `./gradlew jooqGenerate` 또는 표준 build entrypoint로 codegen 성공 여부를 먼저 확인하되, generated source를 커밋하지 않는다.
-      `jooqGenerate` 는 PostgreSQL bootstrap 기반 codegen lane이며, generated source 비커밋/로컬·CI 운영 규칙은 docs/api/jooq-codegen-policy.md 를 따른다.
+      `jooqGenerate` 는 PostgreSQL bootstrap 기반 codegen lane이며, generated source 비커밋/로컬·CI 운영 규칙은 docs/api/guide/jooq-codegen-policy.md 를 따른다.
       generated jOOQ 클래스는 직접 수정하지 않는다 (jooqGenerate 재실행으로 재생성).
       generated-only 루트는 실행 시 전량 삭제 후 재생성될 수 있으므로 수기 작성 소스를 두지 않는다.
-      상세 운영 정책은 docs/api/jooq-codegen-policy.md 참조.
+      상세 운영 정책은 docs/api/guide/jooq-codegen-policy.md 참조.
     stacks: [springboot]
   - id: SB-017
     rule: |
@@ -266,7 +266,7 @@ springboot:
     rule: |
       피처 추가 시 검증 데이터 동반 규칙.
       신규 Controller/Service/Entity 가 참조 데이터(부서/사용자/팀/태그 등) 를 요구하면 테스트 fixture, 정적 개발용 SQL, 또는 명시적인 수동 준비 절차 중 하나로 검증 데이터를 함께 정의한다.
-      `docs/api/api-springboot-endpoint-checklist.md` 의 엔드포인트 체크박스는 bootRun + Swagger 수동 검증에 필요한 데이터 준비 절차가 재현 가능해야 완료로 전환한다.
+      `docs/api/guide/endpoint-checklist.md` 의 엔드포인트 체크박스는 bootRun + Swagger 수동 검증에 필요한 데이터 준비 절차가 재현 가능해야 완료로 전환한다.
       검증 데이터 준비 방식이 없으면 수동 검증 재현성이 깨지므로 체크박스 완료 기준 미달로 간주한다.
     stacks: [springboot]
   - id: SB-023
