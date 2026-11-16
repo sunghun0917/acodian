@@ -41,7 +41,7 @@ cd api
 ./gradlew bootRun
 ```
 
-> jooqGenerate 실패 시 `docs/api/jooq-codegen-policy.md` 참조.
+> jooqGenerate 실패 시 `docs/api/guide/jooq-codegen-policy.md` 참조.
 
 ### 3. web (Next.js)
 
@@ -131,7 +131,7 @@ docker compose up
 
 ## 자주 부딪히는 문제
 
-- **jooqGenerate 실패**: Docker 실행 여부 확인 → `docs/api/jooq-codegen-policy.md` 참조
+- **jooqGenerate 실패**: Docker 실행 여부 확인 → `docs/api/guide/jooq-codegen-policy.md` 참조
 - **api 빌드 실패 (generated source 없음/stale)**: 먼저 표준 build entrypoint를 다시 실행하고, codegen만 빠르게 확인해야 하면 `./gradlew jooqGenerate`로 원인을 좁힌다
 - (추후 추가)
 
@@ -141,5 +141,5 @@ docker compose up
 |---|---|
 | 아키텍처 가이드 | `docs/architecture/AX-WMS_기획서_아키텍처가이드.md` |
 | ERD 초안 | `docs/database/ax-wms-erd-draft.sql` |
-| jOOQ codegen 정책 | `docs/api/jooq-codegen-policy.md` |
+| jOOQ codegen 정책 | `docs/api/guide/jooq-codegen-policy.md` |
 | 도메인 용어 사전 | `docs/shared/glossary.md` |

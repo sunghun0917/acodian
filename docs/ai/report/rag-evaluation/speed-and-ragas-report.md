@@ -6,9 +6,9 @@
 **대상 시스템:** AX-WMS AI 서비스 (FastAPI, LightRAG v3 및 실행 시작 시점 v4, Qdrant, Neo4j, Gemini, HuggingFace TEI)
 **통합 대상 산출물:**  
 - 기존 TaskGroup / SSE 기록: 본문 2~3절 보존. 이전 참조 경로 `docs/ai/sse-report.md`는 현재 작업 트리에 없어 원본 수치는 재검증하지 못했습니다.
-- [2026-09-29 V4 기준답변 Baseline 평가](../evaluation/v4/results-ragas-gemini-3.8-flash-20260929/report.md)
-- [2026-09-30 V4 Reranker ON 평가](../evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md)
-- [2026-10-15 시작 시점 `app.light.v4` 평가](../evaluation/v4/results-current-v4-20261015/report.md)
+- [2026-09-29 V4 기준답변 Baseline 평가](../../evaluation/v4/results-ragas-gemini-3.8-flash-20260929/report.md)
+- [2026-09-30 V4 Reranker ON 평가](../../evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/report.md)
+- [2026-10-15 시작 시점 `app.light.v4` 평가](../../evaluation/v4/results-current-v4-20261015/report.md)
 
 > **최신 결과의 유효 범위:** 50문항·150지표 채점은 완료됐지만, 실행 중 v4 소스 4개가 변경되어 종료 동일성 검증은 `source_changed`로 실패했다. 결과는 **실행 시작 시점 코드 기준**이며 현재 작업 트리의 최신 코드 평가로 간주하지 않는다. 로컬 KV·실제 Neo4j/Qdrant 인덱스는 실행 전후 동일했다. 원래 실행 계약과 유료 결과를 보존했으며 자동 재평가하지 않았다.
 
@@ -220,7 +220,7 @@ xychart-beta
 - `v4-033`: 정확히 두 단계 앞의 정답은 Worklog 275인데 이번 답변은 274까지 함께 제시해 도달 범위를 확장했습니다. Faithfulness 1.0 → 0.4444입니다.
 - `v4-039`: 양쪽 모두 간접 선행 274·275를 누락했습니다. 이번에는 검색 문맥에 없다는 한계를 **등록된 관계 자체가 존재하지 않는다**는 단정으로 강화했고, Faithfulness 1.0 → 0.2입니다. Relevancy는 상승했으므로 관련성 상승을 정답성 개선으로 읽으면 안 됩니다.
 
-사례 원본은 [이전 문항 JSON](../evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/rows/)과 [이번 문항 JSON](../evaluation/v4/results-current-v4-20261015/rows/)의 같은 `v4-NNN--mix.json`에서 확인합니다. 전체 50문항의 구조화 정답률은 별도로 계산하지 않았습니다.
+사례 원본은 [이전 문항 JSON](../../evaluation/v4/results-ragas-reranker-v4-mix-only-20260930/rows)과 [이번 문항 JSON](../../evaluation/v4/results-current-v4-20261015/rows)의 같은 `v4-NNN--mix.json`에서 확인합니다. 전체 50문항의 구조화 정답률은 별도로 계산하지 않았습니다.
 
 **추론 / 중간 신뢰도:** 평균 답변 길이가 **152.86자 → 578.42자**로 약 3.8배 늘었습니다. 더 큰 답변 모델과 긴 서비스 프롬프트에서 추가 설명·단정이 증가해 Faithfulness 하락에 기여했을 가능성이 있습니다. judge의 주장별 판정 근거나 통제 실험이 없어 원인으로 확정하지 않습니다.
 
@@ -239,7 +239,7 @@ xychart-beta
 - 생성 50/50, 채점 50/50, 유효 점수 150/150, 생성·채점 오류 0건.
 - 종료 계약 검증은 소스 해시 변경으로 실패했습니다. `lightrag_adapter.py`, `worklog_query_service.py`, `worklog_query_cache.py`, `worklog_extraction_cache.py`의 수정 시각은 첫 문항 완료 이후입니다. 실행 프로세스는 이미 import한 코드를 reload하지 않았습니다.
 - 로컬 KV·실제 Neo4j/Qdrant 내용과 vector/payload, 모델·프롬프트·설정은 실행 전후 동일함을 확인했습니다.
-- [원래 실행 계약과 종료 기록](../evaluation/v4/results-current-v4-20261015/run.json), [검증 상태](../evaluation/v4/results-current-v4-20261015/validation.json), [집계 JSON](../evaluation/v4/results-current-v4-20261015/summary.json)을 보존했습니다. 현재 최신 코드의 평가나 종료 검증 성공으로 승격하지 않습니다.
+- [원래 실행 계약과 종료 기록](../../evaluation/v4/results-current-v4-20261015/run.json), [검증 상태](../../evaluation/v4/results-current-v4-20261015/validation.json), [집계 JSON](../../evaluation/v4/results-current-v4-20261015/summary.json)을 보존했습니다. 현재 최신 코드의 평가나 종료 검증 성공으로 승격하지 않습니다.
 - 이번 실행에서는 팀 권한, SSE, 운영 전체 데이터, 정확한 청구액을 평가하지 않았습니다. `generation_usage=null`이며 토큰 사용량은 현재 adapter가 반환하지 않습니다.
 
 ---

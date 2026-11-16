@@ -1,7 +1,7 @@
-# api-springboot-endpoint-checklist.md
+# AX-WMS Spring Boot `/api` 엔드포인트 체크리스트
 
-- 기준 문서: [`api-springboot-endpoint-class-mapping.md`](api-springboot-endpoint-class-mapping.md)
-- 표기 기준: [`spec/api-spec-index.md`](spec/api-spec-index.md) 의 normalized path (복수형, `/list` 미사용)
+- 기준 문서: [`endpoint-class-mapping.md`](endpoint-class-mapping.md)
+- 표기 기준: [`spec/api-spec-index.md`](../spec/api-spec-index.md) 의 normalized path (복수형, `/list` 미사용)
 
 ---
 

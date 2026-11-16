@@ -24,7 +24,7 @@
 ### 대안
 1. **`DOCKER_HOST` 파싱으로 host 결정** — `jooq-codegen.gradle` 의 jdbcUrl 을 `tcp://<host>:<port>` 환경변수에서 hostname 추출해 주입. 로컬은 `localhost` 폴백 유지.
 2. Runner `config.toml` 에 `network_mode = "host"` 복구 — 코드 무변경으로 과거 동작 재현 가능하지만 근본적으로 환경에 의존한 코드라는 문제는 남는다.
-3. `docs/api/jooq-codegen-policy.md` 를 포기하고 generated source 를 커밋 (ADR-008 의 후속 선택지 3번) — 범위가 매우 크다.
+3. `docs/api/guide/jooq-codegen-policy.md` 를 포기하고 generated source 를 커밋 (ADR-008 의 후속 선택지 3번) — 범위가 매우 크다.
 
 ### 유예 이유
 - 해결책 1이 기술적으로 명확하고 위험이 작지만, 이 모듈을 설계한 팀원과 codegen 정책 소유권을 공유하고 있어 **팀원 합의가 선행되어야 한다**.

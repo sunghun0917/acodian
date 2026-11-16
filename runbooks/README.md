@@ -40,5 +40,5 @@
 
 ## 🔗 관련 정책 및 참조 문서
 
-- **jOOQ 코드 생성 운영 정책**: [`docs/api/jooq-codegen-policy.md`](../docs/api/jooq-codegen-policy.md)
+- **jOOQ 코드 생성 운영 정책**: [`docs/api/guide/jooq-codegen-policy.md`](../docs/api/guide/jooq-codegen-policy.md)
 - **전체 문서화 관리 전략**: [`docs/docs-strategy.md`](../docs/docs-strategy.md)

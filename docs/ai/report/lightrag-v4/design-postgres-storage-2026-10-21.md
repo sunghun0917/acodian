@@ -3,7 +3,7 @@
 - 작성일: 2026-10-21
 - 상태: 사용자 승인 후 직접 구현·독립 리뷰 보완 완료, 실제 PG 통합 검증·전체 재색인 대기
 - 대상: AX-WMS 활성 `ai/app/light/v4/`, `lightrag-hku==1.4.10`
-- 관련 분석: [동시성·정합성 분석](../../ai/lightrag-concurrency-consistency-analysis.md)
+- 관련 분석: [동시성·정합성 분석](research-concurrency-consistency.md)
 - 이 문서는 승인된 설계 명세다. 코드 구현은 반영했으며 DB 생성·데이터 초기화·재색인은 수행하지 않았다.
 
 ## 1. 목적과 성공 기준
@@ -262,4 +262,4 @@ snapshot 제거는 LightRAG 기본 `full_docs`·`text_chunks`까지 없앤다는
 - source 조회와 LightRAG PG 쓰기는 서로 다른 DB 연결이다. 이번에 원본 수정·색인을 단일 transaction으로 묶지 않는다.
 - 별도 DB여도 서버 부하·장애는 공유하며 실제 성능은 측정하지 않았다.
 
-문서 자체 검토와 사용자 승인 후 [구현 계획](../plans/2026-10-21-lightrag-postgres-storage.md)에 따라 현재 세션에서 직접 구현했다. 최종 독립 리뷰의 정상 PG 누락 응답·삭제 오류 전달 지적을 회귀 테스트로 보완했다. 실제 DB 변경·재색인·커밋은 하지 않았다.
+문서 자체 검토와 사용자 승인 후 [구현 계획](plan-postgres-storage-2026-10-21.md)에 따라 현재 세션에서 직접 구현했다. 최종 독립 리뷰의 정상 PG 누락 응답·삭제 오류 전달 지적을 회귀 테스트로 보완했다. 실제 DB 변경·재색인·커밋은 하지 않았다.

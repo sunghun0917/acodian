@@ -28,4 +28,4 @@
 
 ## 🔗 관련 정책 문서
 
-- [`docs/api/jooq-codegen-policy.md`](../../docs/api/jooq-codegen-policy.md): jOOQ 코드 생성 운영 모델 및 빌드 정책
+- [`docs/api/guide/jooq-codegen-policy.md`](../../docs/api/guide/jooq-codegen-policy.md): jOOQ 코드 생성 운영 모델 및 빌드 정책

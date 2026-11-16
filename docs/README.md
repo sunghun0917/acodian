@@ -13,9 +13,28 @@
 | AI | [AI 문서 안내](ai/README.md) | FastAPI·LightRAG 가이드, 검색 전략, 평가 데이터·결과·보고서 |
 | 인프라 | [인프라 문서 안내](infra/README.md) | Nginx, 배포·CI/CD, 라우팅, 설계 결정 |
 | 공통 | [온보딩](shared/onboarding.md) · [로컬 개발 서버](shared/local-dev-server-setup.md) | [보안 정책](shared/security-policy.md), [용어집](shared/glossary.md), [데이터 사전](shared/data-dictionary.md) |
-| 설계·구현 계획 | [설계서](superpowers/specs/) · [구현 계획](superpowers/plans/) | 날짜가 포함된 작업별 산출물. 현재 운영 규칙과 구분 |
 | 이미지 | [시스템 개요](images/acodian-overview.png) · [AWS 구성도](images/acodian-aws-architecture.png) | 문서에서 사용하는 공용 그림 |
 | 과거 기술 참고 | [NestJS 표준 가이드](archive/AX-WMS_NestJS_표준가이드.docx) | 현재 Spring Boot API의 구현 기준이 아닌 과거 기술 문서 |
+
+## 작업별 종합 정리
+
+지금까지 한 개발 작업은 **주제마다 폴더 하나**로 모았다. 폴더의 `README.md`가 그 주제의 종합 정리이고, 같은 폴더에 근거가 되는 원본 보고서와 측정 원본이 있다. 각 README는 같은 순서로 되어 있다: 현재 상태, 배경(문제), 목표, 선택지와 결정(트레이드오프), 구현, 결과, 진행 중 바뀐 결정, 한계와 위험, 개선할 점, 점검 질문, 원본 문서.
+
+**처음 읽을 때는 각 README 맨 위의 "현재 상태"부터 본다.** 나중에 바뀌거나 제거된 내용이 있으면 거기에 적혀 있다.
+
+| 기간 | 주제 | 영역 | 현재 상태 | 폴더 |
+|---|---|---|---|---|
+| 09-26 ~ 10-15 | RAG 검색 품질과 평가 (RAGAS, 벤치마크 V1~V4, 응답 속도) | AI | 평가 기록 보존 | [ai/report/rag-evaluation](ai/report/rag-evaluation/README.md) |
+| 10-04 ~ 10-11 | RAG 답변 캐시와 증분 재색인 (2단계 캐시, 버전 무효화) | AI | 구현 완료, v4에서 답변 캐시는 꺼짐 | [ai/report/rag-cache](ai/report/rag-cache/README.md) |
+| 10-07 | 선행 업무 등록 동시성 제어 (낙관적 락) | API | 완료 | [api/report/worklog-dependency-lock](api/report/worklog-dependency-lock/README.md) |
+| 10-13 ~ 10-24 | LightRAG v4 전환 (팀별 검색, PostgreSQL 저장소, 1단계 안정화) | AI | 완료, 현재 서비스 코드 | [ai/report/lightrag-v4](ai/report/lightrag-v4/README.md) |
+| 10-18 ~ 10-29 | 업무일지 AI 후처리 Outbox (도입, 역할 분리) | API | 완료, 11-12에 작업별 Outbox로 변경 | [api/report/worklog-outbox](api/report/worklog-outbox/README.md) |
+| 10-17 ~ 10-29 | 업무일지 색인 비동기화 (Celery 전환, Worker 분리) | API, AI | 완료, 11-12에 일부 정리 | [api/report/worklog-index-celery](api/report/worklog-index-celery/README.md) |
+| 10-30 ~ 11-13 | AI 작업 신뢰성 (작업별 알림, 수동 재시도, 단순화) | API, AI | 완료, **현재 구조의 기준** | [api/report/ai-task-reliability](api/report/ai-task-reliability/README.md) |
+
+주제 사이의 관계:
+- 색인 요청 경로는 **캐시 문서(10-04) → Outbox(10-18) → Celery(10-27) → AI 작업 신뢰성(11-12)** 순서로 바뀌었다. 지금 구조는 마지막 문서가 기준이다.
+- 검색과 권한은 **캐시 문서(사후 필터) → LightRAG v4(팀 workspace)** 순서로 바뀌었다.
 
 ## 문서 관리·도구
 

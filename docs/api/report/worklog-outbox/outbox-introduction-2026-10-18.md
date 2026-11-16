@@ -74,7 +74,7 @@ Spring 내부 Outbox 스케줄러
 | `domain/worklog/repository/WorklogLightOutboxRepository.java` | 수정·삭제의 null ID 선점 SQL 오류 수정 |
 | `api/src/main/resources/application.yml` | 실제 기동을 막던 Light index 설정 들여쓰기 수정 |
 
-등록·수정·삭제 흐름을 설명하는 [HTML 흐름 문서](../../ai/report/rag-flow-guide.html)의 등록 경로도 Outbox 방식으로 갱신했다. 사용자 요청에 따라 해당 그림에서는 파일 요약·태그 상세와 선점/단계 복구 설명을 생략했다. **그림에서 생략한 기능을 실제 코드에서 제거한 것은 아니다.**
+등록·수정·삭제 흐름을 설명하는 [HTML 흐름 문서](../../../ai/guide/rag-flow.html)의 등록 경로도 Outbox 방식으로 갱신했다. 사용자 요청에 따라 해당 그림에서는 파일 요약·태그 상세와 선점/단계 복구 설명을 생략했다. **그림에서 생략한 기능을 실제 코드에서 제거한 것은 아니다.**
 
 ## 3. 발견한 오류와 수정
 
@@ -313,8 +313,8 @@ Redis 전원·디스크 손실의 메시지 내구성, 장문·대용량 파일,
 | 등록 장애 복구 1차 | `graphify-out/outbox-live-20261018-044044-cfa56d/` |
 | 수정·삭제 실연동 2차 | `graphify-out/outbox-live-20261018-052450-de2fbe/` |
 | 15회 시간 측정 3차 | `graphify-out/outbox-live-20261018-062120-67e5e0/` |
-| 비밀정보 없는 측정 JSON | [원시 결과 JSON](worklog-outbox-5x-timing-2026-10-18.json) |
-| 비밀정보 없는 측정 CSV | [원시 결과 CSV](worklog-outbox-5x-timing-2026-10-18.csv) |
+| 비밀정보 없는 측정 JSON | [원시 결과 JSON](timing-5x-2026-10-18.json) |
+| 비밀정보 없는 측정 CSV | [원시 결과 CSV](timing-5x-2026-10-18.csv) |
 | 등록 하네스 | `graphify-out/.outbox_live_validation.py` |
 | 수정·삭제 하네스 | `graphify-out/.light_outbox_live_validation.py` |
 | 시간 측정·추가 그래프 관측 | `graphify-out/.outbox_5x_timing.py`, `graphify-out/.outbox_graph_monitor.py` |
@@ -325,4 +325,4 @@ Redis 전원·디스크 손실의 메시지 내구성, 장문·대용량 파일,
 
 각 실행의 테스트 전용 컨테이너 7개와 네트워크는 정리했고 기존 개발 컨테이너 5개는 건드리지 않았다. 제품 코드 추가 수정·기존 개발 서버 재기동·커밋은 이번 보고서 통합 작업에서 하지 않았다.
 
-기존 [2026-10-06 RAG 캐시·증분 재색인 보고서](../../ai/report/worklog-rag-cache-and-reindex-report.md)는 다른 시점·범위의 기록이므로 본문을 합치지 않고 참고 문서로 유지한다. 해당 문서의 1,000건 캐시 벤치마크와 이번 순차 15회 처리 시간은 서로 다른 실험이다.
+기존 [2026-10-06 RAG 캐시·증분 재색인 보고서](../../../ai/report/rag-cache/cache-and-reindex-report-2026-10-06.md)는 다른 시점·범위의 기록이므로 본문을 합치지 않고 참고 문서로 유지한다. 해당 문서의 1,000건 캐시 벤치마크와 이번 순차 15회 처리 시간은 서로 다른 실험이다.

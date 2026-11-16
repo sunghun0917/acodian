@@ -16,6 +16,8 @@ docs/web/
 ├── design-tokens.md          # 디자인 토큰
 ├── AX-WMS_NextJS_표준가이드.docx # 기존 Word 참고 가이드
 ├── work-summary.md           # 초기 구성 작업 기록
+├── report/                   # 작업별 설계서와 구현 계획
+│   └── user-management-list/ # 사용자 관리 목록 화면 (2026-05-06)
 └── inho/                     # 기존 작업·검토 기록
 ```
 
@@ -37,6 +39,7 @@ docs/web/
 - **화면별 담당자 매핑**: [`ownership.md`](ownership.md)
 - **설계 결정 / 코드 컨벤션**: [ADR](adr.yaml) · [컨벤션](code-convention.yaml)
 - **디자인 토큰**: [design-tokens.md](design-tokens.md)
+- **사용자 관리 목록 화면 설계, 구현 계획 (2026-05-06)**: [design-2026-05-06.md](report/user-management-list/design-2026-05-06.md), [plan-2026-05-06.md](report/user-management-list/plan-2026-05-06.md)
 - **Next.js 표준 가이드 (Word 참고 자료)**: [AX-WMS_NextJS_표준가이드.docx](AX-WMS_NextJS_표준가이드.docx)
 - **초기 구성 작업 기록 / 기존 검토 메모**: [work-summary.md](work-summary.md) · [inho/](inho/)
 - **코드 작업 규칙 / 전체 문서 안내**: [web/AGENTS.md](../../web/AGENTS.md) · [docs/README.md](../README.md)

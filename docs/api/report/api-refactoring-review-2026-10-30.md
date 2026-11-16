@@ -137,7 +137,7 @@
 - **문제:** 최초 색인이 원본을 읽은 뒤 AI 태그가 저장되면 추가 색인 요청이 없어 태그가 DB에만 반영된다. 태그 병합으로 업무 태그가 치환되는 경로도 같은 동기화 정책을 확인해야 한다.
 - **최소 수정:** 실제 신규 태그 관계가 생긴 경우 같은 트랜잭션에서 재색인을 예약한다. 중복 콜백에서 불필요한 재색인이 반복되지 않게 한다.
 - **방치 영향:** 태그를 검색 문맥으로 쓰는 AI 검색이 최신 업무 정보를 계속 놓칠 수 있다.
-- **근거:** [InternalTagAiCallbackService.java](../../../api/src/main/java/com/ibank/axwms/domain/tag/service/InternalTagAiCallbackService.java#L44). 기존 [업무 등록 검증 보고서](worklog-create-outbox-validation.md)의 254–275행에도 해당 실행 순서의 관측이 기록되어 있다. 이번 검수에서 외부 AI 실연동은 반복하지 않았다.
+- **근거:** [InternalTagAiCallbackService.java](../../../api/src/main/java/com/ibank/axwms/domain/tag/service/InternalTagAiCallbackService.java#L44). 기존 [업무 등록 검증 보고서](worklog-outbox/outbox-introduction-2026-10-18.md)의 254–275행에도 해당 실행 순서의 관측이 기록되어 있다. 이번 검수에서 외부 AI 실연동은 반복하지 않았다.
 
 ## 7. 태그 선택·AI 태그·병합
 

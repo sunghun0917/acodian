@@ -10,7 +10,7 @@
 
 **기술:** Python 3.12, Celery 5.6.3, Redis, Docker Compose, POSIX shell, pytest.
 
-**설계:** [Celery Worker 분리 설계](../specs/2026-10-29-celery-worker-isolation-design.md)
+**설계:** [Celery Worker 분리 설계](design-worker-isolation-2026-10-29.md)
 
 ## 공통 제약
 
@@ -28,7 +28,7 @@
 - `ai/tests/test_celery_worker_isolation.py`: 격리 Redis에서 두 Worker의 큐 소비와 동시 실행 검증.
 - `infra/compose.local.yml`, `infra/compose.deploy.yml`: 두 Worker 서비스와 큐, 이미지·환경·볼륨 설정.
 - `infra/scripts/remote-deploy.sh`: 두 Worker의 pull·교체·시작.
-- `docs/infra/ec2-gitlab-cicd-guide.md`, `docs/ai/lightrag-postgres-setup.md`: 배포 대상, 기존 큐 및 롤백 절차.
+- `docs/infra/ec2-gitlab-cicd-guide.md`, `docs/ai/guide/lightrag-postgres-setup.md`: 배포 대상, 기존 큐 및 롤백 절차.
 - `ai/AGENTS.md`: 기존 기능 매트릭스에 변경 대상 행을 추가하는 프로젝트 규칙을 확인해 적용.
 
 ## 검토 초점
@@ -54,7 +54,7 @@
 
 ### 작업 2: 로컬·배포 Worker와 전환 절차
 
-**파일:** 수정 `infra/compose.local.yml`, `infra/compose.deploy.yml`, `infra/scripts/remote-deploy.sh`, `docs/infra/ec2-gitlab-cicd-guide.md`, `docs/ai/lightrag-postgres-setup.md`; 필요 시 관련 검증 테스트 추가.
+**파일:** 수정 `infra/compose.local.yml`, `infra/compose.deploy.yml`, `infra/scripts/remote-deploy.sh`, `docs/infra/ec2-gitlab-cicd-guide.md`, `docs/ai/guide/lightrag-postgres-setup.md`; 필요 시 관련 검증 테스트 추가.
 
 **인터페이스:** `ai_worker`는 일반 Worker로 유지하고 `ai_index_worker`를 추가한다. 각각 `--queues=ai_general,celery`, `--queues=worklog_index`를 사용하며 `--concurrency=1`이다. 노드 이름은 각각 `general@%h`, `index@%h`로 구분한다.
 

@@ -13,8 +13,8 @@
 
 - 재현 준비: `docker run -d --name axwms-semantic-bench-20261011 -p 127.0.0.1:6388:6379 redis:8.10.0-alpine --save '' --appendonly no` (빈 전용 컨테이너만 사용). 측정 후 `docker stop axwms-semantic-bench-20261011` 및 `docker rm axwms-semantic-bench-20261011`.
 - 실행: `cd ai && .venv/Scripts/python.exe -m benchmarks.semantic_cache_real_embedding run` (`ai/.env`의 Gemini 키 필요; 기존 원시 JSON이 있으면 덮어쓰지 않고 중단).
-- 측정 코드: [`ai/benchmarks/semantic_cache_real_embedding.py`](../../../ai/benchmarks/semantic_cache_real_embedding.py)
-- 원시 표본·계수: [`semantic-cache-real-embedding-raw.json`](semantic-cache-real-embedding-raw.json)
+- 측정 코드: [`ai/benchmarks/semantic_cache_real_embedding.py`](../../../../ai/benchmarks/semantic_cache_real_embedding.py)
+- 원시 표본·계수: [`semantic-cache-real-embedding-raw.json`](semantic-cache-real-embedding-2026-10-11-raw.json)
 - 환경: 개발자 PC, Python 3.11.6, FastAPI 0.136.0, `httpx` 0.28.1, Redis 8.10.0 전용 Docker 컨테이너(`127.0.0.1:6388`), `gemini-embedding-001` 768차원, 동시성 1. 프로젝트 권장 Python 3.12와는 다르므로 결과를 배포 환경에 일반화하지 않는다.
 - 별도 프로세스의 FastAPI에 제품 `POST /ai/light/worklogs-v3/query` 라우터와 `LightWorklogQueryService`를 연결했다. Redis는 실제 `WorklogQueryCache`의 `FT.SEARCH`를 사용했다. 벤치마크 전용 wrapper는 시간·호출 횟수만 수집하고, LightRAG adapter는 호출 시 오류를 내도록 차단했다.
 - 질문 A와 다른 문자열인 질문 B를 Gemini로 각각 한 번 임베딩했다. cosine 유사도 **0.945944**를 확인하고 A의 답변을 고유 marker로 Redis에 저장했다. 이후 B 요청은 Exact MISS → 실임베딩 → Semantic HIT를, A 요청은 Exact HIT를 확인했다. 모든 응답이 저장한 marker와 일치했다.

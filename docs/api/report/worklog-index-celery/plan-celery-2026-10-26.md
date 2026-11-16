@@ -8,7 +8,7 @@
 
 **기술:** Spring Boot, PostgreSQL/Flyway, FastAPI/Pydantic, Celery/Redis, Docker Compose.
 
-**설계:** `docs/superpowers/specs/2026-10-25-worklog-index-celery-design.md`
+**설계:** `docs/api/report/worklog-index-celery/design-celery-2026-10-25.md`
 
 ## 공통 제약
 

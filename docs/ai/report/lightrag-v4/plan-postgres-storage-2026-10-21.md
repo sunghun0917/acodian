@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI, Python 3.12, lightrag-hku==1.4.10, PostgreSQL, 기존 asyncpg==0.31.0·SQLAlchemy, Neo4j, Qdrant, pytest.
 
-**Spec:** [승인된 설계 명세](../specs/2026-10-21-lightrag-postgres-storage-design.md)
+**Spec:** [승인된 설계 명세](design-postgres-storage-2026-10-21.md)
 
 ## Global Constraints
 
@@ -43,7 +43,7 @@
 | 관련 `ai/tests/test_light_worklog_*.py`, `test_lightrag_v4_adapter.py` | 기존 fake·snapshot 계약을 새 source·status 계약으로 교체 |
 | `ai/tests/test_light_worklog_pg_storage_integration.py` (신규) | 명시적으로 격리된 실제 PG 기본 storage 계약 |
 | `infra/compose.deploy.yml`, `infra/.env.example` | AI·worker에 같은 전용 DB DSN·workspace 전달 |
-| `docs/ai/lightrag-postgres-setup.md` (신규), `docs/ai/rag-team-prefilter.md`, `ai/AGENTS.md` | DB 준비·전환 절차, 변경된 조회 계약, 파일 소유권 기록 |
+| `docs/ai/guide/lightrag-postgres-setup.md` (신규), `docs/ai/guide/lightrag-team-search.md`, `ai/AGENTS.md` | DB 준비·전환 절차, 변경된 조회 계약, 파일 소유권 기록 |
 
 기존 `worklog_source_store.py`·`worklog_source_row_reader.py`·Custom KG 생성/검증 로직은 재사용한다. 동작 변경이 필요 없는 파일은 수정하지 않는다.
 
@@ -150,7 +150,7 @@ assert not global_query_calls
 
 ## Task 5: 전용 DB 준비·설정 공급·전체 회귀
 
-**Files:** Modify `infra/compose.deploy.yml`, `infra/.env.example`, `docs/ai/rag-team-prefilter.md`, `ai/AGENTS.md`; Create `docs/ai/lightrag-postgres-setup.md`. `infra/compose.local.yml`의 PostgreSQL 서버·volume 구성은 변경하지 않는다.
+**Files:** Modify `infra/compose.deploy.yml`, `infra/.env.example`, `docs/ai/guide/lightrag-team-search.md`, `ai/AGENTS.md`; Create `docs/ai/guide/lightrag-postgres-setup.md`. `infra/compose.local.yml`의 PostgreSQL 서버·volume 구성은 변경하지 않는다.
 
 **Interfaces:** Consumes `LIGHTRAG_PG_DSN`, `LIGHTRAG_WORKSPACE=axwms_pg_v1`. 업무 DB `PGVECTOR_DSN`·기존 서비스 포트·healthcheck·배포 정책은 유지한다.
 

@@ -88,7 +88,7 @@
 - **정의**: 업무일지 또는 파일 텍스트를 청킹한 뒤 벡터로 변환한 결과. pgvector에 저장되어 시맨틱 검색에 사용한다.
 - **ERD 매핑**: `tb_worklog_embedding`, `tb_file_embedding`
 - **사용 맥락**: 시맨틱 검색, AI 파이프라인 산출물
-- **참고**: `api`는 현재 embedding 테이블에 직접 접근하지 않는다. 자세한 내용은 `docs/api/jooq-codegen-policy.md` 참조.
+- **참고**: `api`는 현재 embedding 테이블에 직접 접근하지 않는다. 자세한 내용은 `docs/api/guide/jooq-codegen-policy.md` 참조.
 
 ### 청킹 (Chunking)
 

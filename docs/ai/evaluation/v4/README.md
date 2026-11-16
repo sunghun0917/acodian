@@ -94,7 +94,7 @@ ai/.venv/Scripts/python.exe -B -X utf8 docs/ai/evaluation/v4/run_ragas_reranker.
 
 ## 🔗 6. 관련 보고서 링크
 
-- [RAG 최적화 및 V4 종합 평가 보고서](../../report/rag-optimization-and-evaluation-report.md) (2026-10-15 최신 갱신)
+- [RAG 최적화 및 V4 종합 평가 보고서](../../report/rag-evaluation/speed-and-ragas-report.md) (2026-10-15 최신 갱신)
 - [시작 시점 v4 실실행 보고서](results-current-v4-20261015/report.md)
 - [Baseline 재채점 보고서](results-ragas-gemini-3.8-flash-20260929/report.md)
 - [Reranker ON 평가 보고서](results-ragas-reranker-v4-mix-only-20260930/report.md)

@@ -1,10 +1,11 @@
 # AX-WMS Spring Boot `/api` 패키지 구조 설계서
 
 - 기준 문서: `plan/api-design.md`
+  - (2026-11-16 확인: 이 파일은 현재 저장소에 없고 git 이력에도 없다. 현재 API 명세의 기준은 [spec/api-spec-index.md](../spec/api-spec-index.md)다.)
 - 목적: AX-WMS `/api`를 Spring Boot에서 구현할 때, **기본은 도메인 → 레이어**, **예외는 `organization`만 도메인 → 기능 → 레이어** 구조로 설계하기 위한 실행 기준을 제공한다.
 - 범위: 도메인 패키지 구조, repository/entity 배치, 구현 순서, 구조 검증 기준
 - 전제: base package 예시는 `com.ibank.axwms`
-- 연계 문서: `docs/api/api-springboot-endpoint-class-mapping.md`는 endpoint/API별 class-level ownership 매핑만 별도 관리한다.
+- 연계 문서: `docs/api/guide/endpoint-class-mapping.md`는 endpoint/API별 class-level ownership 매핑만 별도 관리한다.
 
 ---
 
@@ -372,8 +373,8 @@ global/
 - internal orchestration service는 `domain/<module>/service/Internal*Service` naming 으로 둔다.
 - 위 `Internal*` prefix 규칙은 internal callback controller/DTO/service 와 private integration DTO/service 같은 비공개 내부 연동 타입에 한정한다.
 - read-heavy 도메인은 `domain/dashboard/readmodel`, `domain/dashboard/repository/jooq`처럼 조회 전용 보조 패키지를 추가할 수 있다.
-- `ControllerDocs` 인터페이스는 Swagger/OpenAPI 문서화 surface이며, `docs/api/api-springboot-endpoint-class-mapping.md`의 class-level 매핑 범위에서는 제외한다.
-- `docs/api/api-springboot-endpoint-class-mapping.md`의 관련 Entity·Repository·JOOQ 컬럼은 ownership/context 식별용이며, direct dependency 허용표가 아니다.
+- `ControllerDocs` 인터페이스는 Swagger/OpenAPI 문서화 surface이며, `docs/api/guide/endpoint-class-mapping.md`의 class-level 매핑 범위에서는 제외한다.
+- `docs/api/guide/endpoint-class-mapping.md`의 관련 Entity·Repository·JOOQ 컬럼은 ownership/context 식별용이며, direct dependency 허용표가 아니다.
 
 ## 6. Entity / Repository 배치 원칙
 
