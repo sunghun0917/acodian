@@ -146,7 +146,7 @@
 1. 다중 색인 Worker가 필요해지면 분산 락 (DB advisory lock 또는 Redis)
 2. 큐 적체 시 lease를 큐 대기와 실행으로 나눌지 검토 (지금은 단순함을 택함)
 3. provider 호출 비용 모니터링
-4. 태그 저장 후 색인 반영 순서 문제 ([Outbox 문서](../worklog-outbox/README.md) 8절과 같은 문제)
+4. ~~태그 저장 후 색인 반영 순서 문제 ([Outbox 문서](../worklog-outbox/README.md) 8절과 같은 문제)~~ **(11-13 해결)** 태그 결과를 반영할 때 새 태그가 연결되면 REINDEX를 자동 예약한다(`api/.../tag/service/InternalTagAiCallbackService.java`, 커밋 `fcb1f685`). 태그 저장이 색인보다 먼저/나중인 두 순서 모두 11-10 실서버 E2E(N8)에서 DB 태그와 Neo4j 태그 관계 일치를 확인했다. 다만 N8은 11-12 단순화 이전 코드에서 실행했고, 이후에는 단위 테스트(`InternalTagAiCallbackServiceTest`)만 있다.
 
 ## 9. 스스로 점검 질문
 

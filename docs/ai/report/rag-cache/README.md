@@ -1,6 +1,6 @@
 # RAG 답변 캐시와 증분 재색인
 
-> **현재 상태:** 구현 완료 (2026-10-06, v3 기준). **하지만 지금 v4 질의 경로에서는 답변 캐시가 꺼져 있다.** 캐시 HIT가 "최신 DB 재조회와 색인 완료 검증"을 건너뛸 수 있어서, 그 검증을 캐시가 지원할 때까지 비활성화했다. `worklog_query_cache.py` 클래스는 v4에 남아 있지만 질의 라우터가 만들지 않는다. 증분 재색인(문서 1건만 삭제 후 재삽입)은 v4에서도 유지된다. 재색인 전달 방식은 이후 Outbox, Celery로 바뀌었다([Celery 전환](../../../api/report/worklog-index-celery/README.md) 참고).
+> **현재 상태:** 구현 완료 (2026-10-06, v3 기준. v3 코드는 2026-11-13 커밋 `32c18af5`로 삭제됐다). **하지만 지금 v4 질의 경로에서는 답변 캐시가 꺼져 있다.** 캐시 HIT가 "최신 DB 재조회와 색인 완료 검증"을 건너뛸 수 있어서, 그 검증을 캐시가 지원할 때까지 비활성화했다. `worklog_query_cache.py` 클래스는 v4에 남아 있지만 질의 서비스가 캐시를 쓰지 않고, Celery 색인 작업도 캐시 없이 색인 서비스를 만들어서 아래 4절의 버전 증가(`INCR`)도 지금은 실행되지 않는다. 증분 재색인(문서 1건만 삭제 후 재삽입)은 v4에서도 유지된다. 재색인 전달 방식은 이후 Outbox, Celery로 바뀌었다([Celery 전환](../../../api/report/worklog-index-celery/README.md) 참고).
 > **기간:** 2026-10-04 (설계) → 10-05~06 (구현, 측정) → 10-11 (실제 임베딩 재측정)
 > **한 줄 요약:** 같은 질문이나 비슷한 질문은 Redis에서 바로 답하고(Exact, Semantic 2단계), 팀 권한별로 캐시를 분리했다. 업무가 바뀌면 그 문서만 다시 색인하고, 캐시는 전역 버전 번호를 `INCR` 한 번으로 올려서 무효화한다.
 
@@ -52,6 +52,9 @@
 ## 4. 구현: 어떻게 동작하나
 
 ### 질의 흐름
+
+> 아래는 v3 당시 흐름이다. 지금 v4에서는 응답 캐시 단계가 실행되지 않는다(맨 위 "현재 상태" 참고).
+
 ```text
 Spring API → (X-AI-Internal-Token 상수 시간 검증) → AI
   → scope = SHA-256(정렬된 allowedTeamIds)  ※ null = 전체 권한, [] = 즉시 빈 응답
@@ -81,7 +84,7 @@ Spring API → (X-AI-Internal-Token 상수 시간 검증) → AI
 ### 핵심 코드 위치
 | 역할 | 파일 |
 |---|---|
-| 캐시 (scope, Exact, Semantic, version) | `ai/app/light/v4/service/worklog_query_cache.py` (현재 질의 경로 미사용) |
+| 캐시 (scope, Exact, Semantic, version) | `ai/app/light/v4/service/worklog_query_cache.py` (현재 질의, 색인 경로 모두 미사용) |
 | 질의 서비스 | `ai/app/light/v4/service/worklog_query_service.py` |
 | 색인, 재색인 | `ai/app/light/v4/service/worklog_index_service.py` |
 | 측정 스크립트 | `ai/benchmarks/semantic_cache_real_embedding.py` |
