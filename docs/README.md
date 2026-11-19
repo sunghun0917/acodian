@@ -6,13 +6,14 @@
 
 | 분류 | 진입점 | 보관 내용 |
 |---|---|---|
-| 아키텍처 | [통합 아키텍처 가이드](architecture/AX-WMS_기획서_아키텍처가이드.md) | 서비스 경계·데이터 소유권·처리 흐름, [기존 Word 원본](architecture/AX-WMS_기획서_아키텍처가이드.docx) |
+| 아키텍처 | [통합 아키텍처 가이드](architecture/AX-WMS_기획서_아키텍처가이드.md), [업무일지 등록/수정/삭제/조회 흐름](architecture/worklog-flow.md) | 서비스 경계·데이터 소유권·처리 흐름, [기존 Word 원본](architecture/AX-WMS_기획서_아키텍처가이드.docx) |
 | 데이터베이스 | [ERD 초안](database/ax-wms-erd-draft.sql) | 설계용 SQL 초안. 실제 스키마 변경은 API의 Flyway migration 기준 |
 | API | [API 문서 안내](api/README.md) | Spring Boot 규칙, API 명세, 구현·검증 보고서 |
 | Web | [Web 문서 안내](web/README.md) | Next.js 규칙, 디자인 토큰, 협업·담당 범위, 작업 기록 |
 | AI | [AI 문서 안내](ai/README.md) | FastAPI·LightRAG 가이드, 검색 전략, 평가 데이터·결과·보고서 |
 | 인프라 | [인프라 문서 안내](infra/README.md) | Nginx, 배포·CI/CD, 라우팅, 설계 결정 |
 | 공통 | [온보딩](shared/onboarding.md) · [로컬 개발 서버](shared/local-dev-server-setup.md) | [보안 정책](shared/security-policy.md), [용어집](shared/glossary.md), [데이터 사전](shared/data-dictionary.md) |
+| 학습 정리 | [분산 트랜잭션과 보상 처리](shared/transaction-study/README.md), [MVCC와 락](shared/mvcc-study/README.md), [색인 워커 병렬화와 락](shared/celery-parallel-study/README.md) | 2PC·Saga·Outbox, S3 보상 흐름, 업무일지 색인의 정합성과 한계. 공유락/배타락, MVCC, 격리 수준. 색인 워커를 여러 개로 늘릴 때의 락 검토(학습용, 구현 아님) |
 | 이미지 | [시스템 개요](images/acodian-overview.png) · [AWS 구성도](images/acodian-aws-architecture.png) | 문서에서 사용하는 공용 그림 |
 | 과거 기술 참고 | [NestJS 표준 가이드](archive/AX-WMS_NestJS_표준가이드.docx) | 현재 Spring Boot API의 구현 기준이 아닌 과거 기술 문서 |
 
@@ -31,6 +32,7 @@
 | 10-18 ~ 10-29 | 업무일지 AI 후처리 Outbox (도입, 역할 분리) | API | 완료, 11-12에 작업별 Outbox로 변경 | [api/report/worklog-outbox](api/report/worklog-outbox/README.md) |
 | 10-17 ~ 10-29 | 업무일지 색인 비동기화 (Celery 전환, Worker 분리) | API, AI | 완료, 11-12에 일부 정리 | [api/report/worklog-index-celery](api/report/worklog-index-celery/README.md) |
 | 10-30 ~ 11-13 | AI 작업 신뢰성 (작업별 알림, 수동 재시도, 단순화) | API, AI | 완료, **현재 구조의 기준** | [api/report/ai-task-reliability](api/report/ai-task-reliability/README.md) |
+| 11-17 ~ | 전사 인덱스 제거와 팀 인덱스 두 벌 번갈아 쓰기 | AI | **계획, 미구현** (종합 정리 README 없이 설계서와 계획서만 있음) | [ai/report/team-index-mvcc](ai/report/team-index-mvcc/design.md) |
 
 주제 사이의 관계:
 - 색인 요청 경로는 **캐시 문서(10-04) → Outbox(10-18) → Celery(10-27) → AI 작업 신뢰성(11-12)** 순서로 바뀌었다. 지금 구조는 마지막 문서가 기준이다.
