@@ -30,11 +30,11 @@ def install():
     import numpy as np
     from redis.asyncio import from_url
     from app.light.v4.service import lightrag_adapter
-    from app.light.v4.service.worklog_index_service import LightWorklogIndexService
+    from app.light.v4.service.worklog_team_copy_writer import TeamCopyWriter
     from app.task import light_worklog_tasks
 
     redis = from_url("redis://redis:6379/0")
-    original_prepare = LightWorklogIndexService.prepare_documents
+    original_sync_team = TeamCopyWriter._sync_team
     original_report = light_worklog_tasks._persist_and_report
     original_start = light_worklog_tasks.WorklogIndexClient.report_start
     original_initialize = lightrag_adapter.LightRagWorklogIndexAdapter._get_initialized_rag
@@ -54,11 +54,9 @@ def install():
             print(f"E2E initialization exception types: {' -> '.join(chain)}; hints: {','.join(sorted(hints))}", flush=True)
             raise
 
-    async def prepare(self, worklog_ids):
-        prepared = await original_prepare(self, worklog_ids)
-        for worklog_id in worklog_ids:
-            await barrier(redis, "prepared", worklog_id)
-        return prepared
+    async def sync_team(self, team_id, worklog_id):
+        await barrier(redis, "prepared", worklog_id)
+        return await original_sync_team(self, team_id, worklog_id)
 
     async def report(worklog_id, *args, **kwargs):
         await barrier(redis, "callback", worklog_id)
@@ -85,7 +83,7 @@ def install():
     def llm(*, settings_obj, dependencies):
         return fake_llm
 
-    LightWorklogIndexService.prepare_documents = prepare
+    TeamCopyWriter._sync_team = sync_team
     light_worklog_tasks._persist_and_report = report
     light_worklog_tasks.WorklogIndexClient.report_start = start
     lightrag_adapter._build_gemini_embedding_func = embedding

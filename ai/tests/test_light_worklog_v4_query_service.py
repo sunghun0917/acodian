@@ -1,9 +1,12 @@
 ﻿from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+
+from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.light.v4.model.worklog_query import WorklogLightQueryRequest
@@ -11,7 +14,16 @@ from app.light.v4.service.lightrag_adapter import LightRagQueryFailedError
 from app.light.v4.service.worklog_query_service import LightWorklogQueryService
 
 
-class ScopedAdapter:
+class CopyPool:
+    @asynccontextmanager
+    async def read_copies(self, team_ids):
+        yield {team: "a" for team in sorted(set(team_ids))}
+
+    def adapter_for(self, team, copy):
+        return getattr(self, "generator", self)
+
+
+class ScopedAdapter(CopyPool):
     def __init__(self) -> None:
         self.retrieval_calls = 0
         self.prompts: list[str] = []
@@ -82,7 +94,7 @@ async def fake_indexed_rows(ids):
 def test_restricted_query_sends_only_authorized_original_rows_to_llm() -> None:
     adapter = ScopedAdapter()
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
 
@@ -137,7 +149,7 @@ def test_restricted_query_adds_only_authorized_one_hop_relations() -> None:
 
     adapter.indexed_reader = read_rows
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
     result = asyncio.run(service.query_worklogs(make_request([101, 103])))
@@ -172,7 +184,7 @@ def test_restricted_query_rejects_excessive_predecessor_expansion() -> None:
 
     adapter.indexed_reader = read_rows
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
     with pytest.raises(LightRagQueryFailedError, match="relation limit exceeded"):
@@ -197,7 +209,7 @@ def test_restricted_query_rejects_excessive_relation_context() -> None:
 
     adapter.indexed_reader = read_rows
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
     with pytest.raises(LightRagQueryFailedError, match="relation context limit exceeded"):
@@ -209,14 +221,12 @@ def test_restricted_query_rejects_excessive_relation_context() -> None:
 def test_empty_team_scope_does_not_retrieve_or_generate() -> None:
     adapter = ScopedAdapter()
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
 
-    result = asyncio.run(service.query_worklogs(make_request([])))
-
-    assert result.answer == ""
-    assert result.references == []
+    with pytest.raises(ValidationError):
+        asyncio.run(service.query_worklogs(make_request([])))
     assert adapter.retrieval_calls == 0
     assert adapter.prompts == []
 
@@ -224,7 +234,7 @@ def test_empty_team_scope_does_not_retrieve_or_generate() -> None:
 def test_streaming_restricted_query_uses_same_authorized_context() -> None:
     adapter = ScopedAdapter()
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
 
@@ -242,21 +252,22 @@ def test_streaming_restricted_query_uses_same_authorized_context() -> None:
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, monkeypatch):
+def test_prefilter_reuses_selected_copies_without_direct_database_access(stream, monkeypatch):
     adapter = ScopedAdapter()
     retrieved_teams = []
     db_calls = []
 
-    class TeamPool:
+    class TeamPool(CopyPool):
+        generator = adapter
         async def query_data(self, options, teams):
-            assert isinstance(teams, tuple)
+            assert isinstance(teams, dict)
             retrieved_teams.append(teams)
             return {"status": "success", "data": {
                 "chunks": [{"file_path": "worklog://1"}, {"file_path": "worklog://2"}],
             }}
 
         async def read_source_rows(self, ids, teams):
-            assert teams == (101,)
+            assert teams == {101: "a"}
             db_calls.append(ids)  # indexed-source lookup, not PostgreSQL
             return await fake_indexed_rows(ids)
 
@@ -268,7 +279,7 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
 
     settings = Settings(_env_file=None)
     service = LightWorklogQueryService(
-        settings_obj=settings, adapter_factory=lambda: adapter,
+        settings_obj=settings,
         team_adapter_factory=TeamPool,
     )
     request = make_request([101])
@@ -279,7 +290,7 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
         return await service.query_worklogs(request)
 
     asyncio.run(run())
-    assert retrieved_teams == [(101,)]
+    assert retrieved_teams == [{101: "a"}]
     assert db_calls == [[1, 2]]
     assert adapter.retrieval_calls == 0
     assert "SECRET" not in adapter.prompts[0]
@@ -291,13 +302,14 @@ def test_prefilter_uses_immutable_team_scope_and_no_postgres_before_llm(stream, 
 def test_prefilter_failure_never_falls_back_to_global_retrieval():
     adapter = ScopedAdapter()
 
-    class TeamPool:
+    class TeamPool(CopyPool):
+        generator = adapter
         async def query_data(self, options, teams):
             raise LightRagQueryFailedError("scope failure")
 
     service = LightWorklogQueryService(
         settings_obj=Settings(_env_file=None),
-        adapter_factory=lambda: adapter, team_adapter_factory=TeamPool,
+        team_adapter_factory=TeamPool,
     )
     with pytest.raises(LightRagQueryFailedError, match="scope failure"):
         asyncio.run(service.query_worklogs(make_request([101])))
@@ -310,7 +322,7 @@ def test_prefilter_empty_scope_does_not_even_create_an_adapter():
         raise AssertionError("empty scope must not create an adapter")
     service = LightWorklogQueryService(
         settings_obj=Settings(_env_file=None),
-        adapter_factory=unexpected, team_adapter_factory=unexpected,
+        team_adapter_factory=unexpected,
     )
-    result = asyncio.run(service.query_worklogs(make_request([])))
-    assert result.answer == ""
+    with pytest.raises(ValidationError):
+        asyncio.run(service.query_worklogs(make_request([])))

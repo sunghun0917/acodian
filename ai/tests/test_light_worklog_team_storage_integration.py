@@ -23,6 +23,7 @@ from app.light.v4.service.worklog_team_scope import LightRagTeamScopeAdapter
 from app.light.v4.store.worklog_source_store import (
     LightWorklogPredecessor, LightWorklogSourceRow, LightWorklogTag,
 )
+from tests.test_light_worklog_team_scope import MemoryCopyStore, memory_locks
 
 pytestmark = pytest.mark.skipif(not (os.environ.get("RAG_SCOPE_TEST_ID") and os.environ.get("RAG_SCOPE_TEST_PG_DSN")),
                                 reason="requires isolated Qdrant/Neo4j test containers")
@@ -84,7 +85,10 @@ def integration_pool(tmp_path, monkeypatch):
     def adapter_factory(**kwargs):
         return LightRagWorklogIndexAdapter(**kwargs, dependencies=dependencies)
 
-    return LightRagTeamScopeAdapter(settings_obj=settings, adapter_factory=adapter_factory), settings
+    return LightRagTeamScopeAdapter(
+        settings_obj=settings, adapter_factory=adapter_factory,
+        store=MemoryCopyStore(), locks=memory_locks(),
+    ), settings
 
 
 def rows():
@@ -128,7 +132,10 @@ def test_real_team_index_retrieval_graph_pg_and_delete(tmp_path, monkeypatch):
             assert "worklog_source" not in record and record["content"]
             assert (await a.doc_status.get_by_id("worklog-1"))["status"] == "processed"
             options = LightRagQueryOptions(query="shared issue", top_k=10, chunk_top_k=10, response_type="summary")
-            results = await asyncio.gather(*(pool.query_data(options, teams) for teams in ((10,), (20,), (10, 20))))
+            results = await asyncio.gather(*(
+                pool.query_data(options, {team: "a" for team in teams})
+                for teams in ((10,), (20,), (10, 20))
+            ))
             assert "A_ONLY" in json.dumps(results[0]) and "B_ONLY" not in json.dumps(results[0])
             assert "B_ONLY" in json.dumps(results[1]) and "A_ONLY" not in json.dumps(results[1])
             assert "A_ONLY" in json.dumps(results[2]) and "B_ONLY" in json.dumps(results[2])
@@ -140,14 +147,14 @@ def test_real_team_index_retrieval_graph_pg_and_delete(tmp_path, monkeypatch):
             await pool.adapter_for(10).delete_document("worklog-3")
             assert await graph.get_node("User:24") is None
             assert await graph.get_node("Tag:5") is None
-            assert "B_ONLY" in json.dumps(await pool.query_data(options, (20,)))
+            assert "B_ONLY" in json.dumps(await pool.query_data(options, {20: "a"}))
         finally:
             await pool.close()
 
     asyncio.run(run())
 
 
-def test_real_retrieval_normal_and_sse_use_latest_source(tmp_path, monkeypatch):
+def test_real_retrieval_normal_and_sse_use_read_copy_snapshot(tmp_path, monkeypatch):
     pool, settings = integration_pool(tmp_path, monkeypatch)
     prompts, source_calls = [], []
     source = {row.worklog_id: row for row in rows()}
@@ -166,14 +173,15 @@ def test_real_retrieval_normal_and_sse_use_latest_source(tmp_path, monkeypatch):
                 return tokens()
             return "safe answer"
 
-    service = LightWorklogQueryService(
-        settings_obj=settings, adapter_factory=Generator, team_adapter_factory=lambda: pool,
-    )
+    monkeypatch.setattr(pool.adapter_for(10, "a"), "complete_scoped", Generator().complete_scoped)
+    service = LightWorklogQueryService(settings_obj=settings, team_adapter_factory=lambda: pool)
     request = WorklogLightQueryRequest.model_validate({"query": "shared issue", "allowedTeamIds": [10]})
 
     async def run():
         try:
             await pool.index_source_rows(list(source.values()))
+            for row in source.values():
+                pool._store.seed_ready(row.team_id, "a", row)
             source[1] = replace(source[1], work_content="LATEST_A_BODY")
             response = await service.query_worklogs(request)
             assert response.answer == "safe answer"
@@ -181,7 +189,8 @@ def test_real_retrieval_normal_and_sse_use_latest_source(tmp_path, monkeypatch):
             events = [event async for event in service.query_worklogs_stream(request)]
             assert events[-1]["event"] == "done" and "worklog://2" not in events[-1]["data"]
             assert source_calls and len(prompts) == 2
-            assert all("LATEST_A_BODY" in prompt and "B_ONLY" not in prompt for prompt in prompts)
+            assert all("A_ONLY_TEXT" in prompt and "LATEST_A_BODY" not in prompt
+                       and "B_ONLY" not in prompt for prompt in prompts)
         finally:
             await pool.close()
 

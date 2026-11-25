@@ -93,7 +93,7 @@ def make_cache():
 def test_scope_and_signature_are_stable_and_distinct():
     cache, _ = make_cache()
     assert cache.scope_key([3, 1, 3]) == cache.scope_key([1, 3])
-    assert cache.scope_key(None) != cache.scope_key([])
+    assert cache.scope_key([1]) != cache.scope_key([2])
     assert len(cache.scope_key([1])) == 64
     opts = dict(top_k=10, chunk_top_k=5, response_type="Multiple Paragraphs",
                 enable_rerank=False, rerank_model=None, llm_model="gemini",

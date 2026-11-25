@@ -1,249 +1,110 @@
+"""모든 요청 종류가 최신 원본으로 수렴하고 실패를 항목별로 반환한다."""
+
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
-from app.light.v4.service import worklog_index_service as service_module
+from app.light.v4.service import worklog_index_service as module
 from app.light.v4.service.lightrag_adapter import (
-    LightRagDeleteFailedError,
-    LightRagDeleteTimeoutError,
-    LightRagInsertFailedError,
-    LightRagInsertTimeoutError,
+    LightRagConfigurationError, LightRagDeleteFailedError, LightRagDeleteTimeoutError,
+    LightRagInsertFailedError, LightRagInsertTimeoutError,
 )
-from app.light.v4.service.worklog_index_service import LightWorklogIndexService
-from app.light.v4.store.worklog_source_store import (
-    LightWorklogPredecessor,
-    LightWorklogSourceRow,
-    LightWorklogTag,
-)
-from app.config.settings import Settings
+from app.light.v4.service.worklog_team_copy_apply import CopyBrokenError
+from app.light.v4.service.worklog_team_copy_lock import LostWriteLockError
+from tests.test_light_worklog_team_copy_writer import Scenario, row
 
 
-@pytest.fixture(autouse=True)
-def isolated_cache(monkeypatch):
-    """단위 테스트가 실제 Redis에 연결하지 않게 한다."""
-    class Cache:
-        async def bump_version(self):
-            return 1
-    monkeypatch.setattr(service_module, "WorklogQueryCache", lambda **kwargs: Cache())
+@pytest.mark.parametrize("operation", ["index_worklogs", "reindex_worklogs", "delete_worklogs"])
+def test_all_operations_sync_latest_source(operation):
+    s = Scenario(); s.seed_both(row()); s.current[7] = row(title="latest")
+    response = asyncio.run(getattr(module.LightWorklogIndexService(writer=s.writer), operation)([7]))
+    assert response.items[0].error is None
+    assert s.snapshot(3, "b").title == "latest"
 
 
-@pytest.fixture(autouse=True)
-def isolated_team_pool(monkeypatch):
-    """순서/오류 매핑 단위 테스트는 실제 팀 저장소에 연결하지 않는다."""
-    class Pool:
-        def adapter_for(self, team_id):
-            return OwnershipAdapter()
-
-        async def index_source_rows(self, rows):
-            assert rows and all(row.team_id > 0 for row in rows)
-
-    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", Pool)
+@pytest.mark.parametrize("operation", ["index_worklogs", "reindex_worklogs"])
+def test_missing_source_converges_to_delete_and_returns_indexed_success(operation):
+    s = Scenario(); s.seed_both(row()); s.current.clear()
+    response = asyncio.run(getattr(module.LightWorklogIndexService(writer=s.writer), operation)([7]))
+    assert response.items[0].indexed and response.items[0].error is None
+    assert (3, "b", 7) not in s.store.data
 
 
-class OwnershipAdapter:
-    """기존 문서는 소유권 없는 fixture로, 새 문서의 snapshot 쓰기는 기록한다."""
-
-    async def save_indexed_team_ids(self, teams):
-        self.saved_teams = {**getattr(self, "saved_teams", {}), **teams}
-
-    async def get_document_team_id(self, doc_id, *, allow_missing=False):
-        return None
-
-    async def set_document_indexing_status(self, document_id, state):
-        pass
-
-    async def delete_document(self, document_id):
-        pass
-
-
-@pytest.mark.parametrize("blocked_phase", ["source", "team"])
-@pytest.mark.parametrize("operation", ["index", "reindex"])
-def test_delete_waits_for_source_read_and_team_index_publication(monkeypatch, blocked_phase, operation):
-    async def run():
-        phase_started, release_phase = asyncio.Event(), asyncio.Event()
-        calls = []
-        team_documents, global_documents = set(), set()
-
-        async def block(phase):
-            if phase == blocked_phase:
-                phase_started.set()
-                await release_phase.wait()
-
-        class Reader:
-            async def fetch_source_rows(self, ids):
-                calls.append("source")
-                await block("source")
-                return {101: make_source_row(101)}
-
-        class Adapter(OwnershipAdapter):
-            async def save_indexed_team_ids(self, teams):
-                global_documents.add(101)
-
-            async def get_document_team_id(self, doc_id, *, allow_missing=False):
-                return 7 if global_documents else None
-
-            async def index_documents(self, docs):
-                calls.append("text")
-
-            async def index_custom_kg_documents(self, docs):
-                calls.append("kg")
-
-            async def delete_document(self, doc_id):
-                calls.append("delete")
-                global_documents.discard(101)
-
-        class TeamAdapter:
-            async def delete_document(self, doc_id):
-                calls.append("team_delete")
-                team_documents.discard(101)
-
-        class Pool:
-            async def index_source_rows(self, rows):
-                await block("team")
-                team_documents.add(101)
-                calls.append("team")
-
-            def adapter_for(self, team_id):
-                return TeamAdapter()
-
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", Adapter)
-        monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", Pool)
-        service = LightWorklogIndexService()
-        mutate = service.index_worklogs if operation == "index" else service.reindex_worklogs
-        indexing = asyncio.create_task(mutate([101]))
-        await phase_started.wait()
-        initial_deletes = calls.count("delete")
-        deleting = asyncio.create_task(LightWorklogIndexService().delete_worklogs([101]))
-        for _ in range(3):
-            await asyncio.sleep(0)
-        try:
-            assert calls.count("delete") == initial_deletes
-        finally:
-            release_phase.set()
-            await asyncio.gather(indexing, deleting)
-        assert calls == ["source", "team_delete", "delete", "text", "kg",
-                         "team", "team_delete", "delete"]
-        assert not team_documents and not global_documents
-
-    asyncio.run(run())
+@pytest.mark.parametrize("error,expected", [
+    (LightRagInsertTimeoutError("insert"), "LIGHTRAG_INSERT_TIMEOUT"),
+    (LightRagInsertFailedError("insert"), "LIGHTRAG_INSERT_FAILED"),
+    (LightRagDeleteTimeoutError("delete"), "LIGHTRAG_DELETE_TIMEOUT"),
+    (LightRagDeleteFailedError("delete"), "LIGHTRAG_DELETE_FAILED"),
+    (CopyBrokenError("broken"), "LIGHTRAG_COMPENSATION_FAILED"),
+    (LostWriteLockError("lost"), "LIGHTRAG_INSERT_FAILED"),
+    (TimeoutError("drain"), "LIGHTRAG_INSERT_TIMEOUT"),
+    (RuntimeError("unexpected"), "LIGHTRAG_INSERT_FAILED"),
+])
+def test_index_failures_are_per_item_and_later_worklogs_continue(error, expected):
+    writer = SimpleNamespace(sync_worklog=AsyncMock(side_effect=[error, None]))
+    response = asyncio.run(module.LightWorklogIndexService(writer=writer).index_worklogs([7, 8]))
+    assert [(item.worklog_id, item.indexed, item.error) for item in response.items] == [
+        (7, False, expected), (8, True, None),
+    ]
 
 
-@pytest.mark.parametrize("status", ["failed", "pending", "processing"])
-def test_native_unprocessed_body_skips_kg_snapshot_and_team_publication(monkeypatch, status):
-    from types import SimpleNamespace
-    from app.light.v4.service.lightrag_adapter import LightRagWorklogIndexAdapter
-
-    calls = []
-
-    class Reader:
-        async def fetch_source_rows(self, ids):
-            return {101: make_source_row(101)}
-
-    class Adapter(LightRagWorklogIndexAdapter):
-        async def get_document_team_id(self, doc_id, *, allow_missing=False):
-            return None
-
-        async def set_document_indexing_status(self, document_id, state):
-            pass
-
-        async def delete_document(self, document_id):
-            pass
-
-        async def index_custom_kg_documents(self, docs):
-            calls.append("kg")
-
-        async def save_indexed_team_ids(self, teams):
-            calls.append("snapshot")
-
-    async def insert(*args, **kwargs):
-        calls.append("body")
-        return "tracking-id"
-
-    async def statuses(ids):
-        return [{"status": status} for _ in ids]
-
-    async def initialized():
-        return SimpleNamespace(ainsert=insert, doc_status=SimpleNamespace(get_by_ids=statuses))
-
-    class Pool:
-        def adapter_for(self, team_id):
-            return OwnershipAdapter()
-
-        async def index_source_rows(self, rows):
-            calls.append("team")
-
-    adapter = Adapter(settings_obj=Settings(_env_file=None))
-    adapter._get_initialized_rag = initialized
-    monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
-    monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", Pool)
-    response = asyncio.run(LightWorklogIndexService().index_worklogs([101]))
-    assert not response.items[0].indexed
-    assert response.items[0].error == "LIGHTRAG_INSERT_FAILED"
-    assert calls == ["body"]
+@pytest.mark.parametrize("error,expected", [
+    (LightRagDeleteTimeoutError("delete"), "LIGHTRAG_DELETE_TIMEOUT"),
+    (TimeoutError("drain"), "LIGHTRAG_DELETE_TIMEOUT"),
+    (LightRagDeleteFailedError("delete"), "LIGHTRAG_DELETE_FAILED"),
+    (RuntimeError("unexpected"), "LIGHTRAG_DELETE_FAILED"),
+])
+def test_delete_failures_are_per_item(error, expected):
+    writer = SimpleNamespace(sync_worklog=AsyncMock(side_effect=[error, None]))
+    response = asyncio.run(module.LightWorklogIndexService(writer=writer).delete_worklogs([7, 8]))
+    assert [(item.worklog_id, item.deleted, item.error) for item in response.items] == [
+        (7, False, expected), (8, True, None),
+    ]
 
 
-@pytest.mark.parametrize("outcome", ["mixed_status", "timeout", "failure"])
-def test_failed_text_insert_invalidates_cache_when_native_may_have_written(monkeypatch, outcome):
-    from types import SimpleNamespace
-    from app.light.v4.service.lightrag_adapter import LightRagWorklogIndexAdapter
+@pytest.mark.parametrize("error", [LightRagConfigurationError("config"), asyncio.CancelledError()])
+def test_configuration_and_cancellation_propagate(error):
+    writer = SimpleNamespace(sync_worklog=AsyncMock(side_effect=error))
+    with pytest.raises(type(error)):
+        asyncio.run(module.LightWorklogIndexService(writer=writer).index_worklogs([7]))
 
-    calls = []
 
-    class Reader:
-        async def fetch_source_rows(self, ids):
-            return {item: make_source_row(item) for item in ids}
+def test_index_service_has_no_global_adapter():
+    with pytest.raises(TypeError):
+        module.LightWorklogIndexService(adapter_factory=lambda: object())
 
-    class Cache:
-        async def bump_version(self):
-            calls.append("invalidate")
-            return 2
 
-    class Adapter(LightRagWorklogIndexAdapter):
-        async def get_document_team_id(self, doc_id, *, allow_missing=False):
-            return None
+@pytest.mark.parametrize("error", [None, LightRagConfigurationError("config"), asyncio.CancelledError()])
+def test_default_writer_owns_redis_client_per_call_and_closes(monkeypatch, error):
+    clients = []
+    def client_factory(url):
+        client = SimpleNamespace(aclose=AsyncMock())
+        clients.append(client)
+        return client
+    monkeypatch.setattr(module, "Redis", SimpleNamespace(from_url=client_factory))
+    monkeypatch.setattr(module, "TeamCopyLocks", lambda **kwargs: object())
+    monkeypatch.setattr(module, "get_lightrag_team_scope_adapter", lambda: object())
+    monkeypatch.setattr(module, "get_worklog_team_copy_store", lambda: object())
+    monkeypatch.setattr(module, "TeamCopyWriter", lambda **kwargs: SimpleNamespace(
+        sync_worklog=AsyncMock(side_effect=error),
+    ))
+    service = module.LightWorklogIndexService()
+    for _ in range(2):
+        if error is None:
+            asyncio.run(service.index_worklogs([7]))
+        else:
+            with pytest.raises(type(error)):
+                asyncio.run(service.index_worklogs([7]))
+    assert len(clients) == 2 and clients[0] is not clients[1]
+    for client in clients:
+        client.aclose.assert_awaited_once()
 
-        async def set_document_indexing_status(self, document_id, state):
-            pass
 
-        async def delete_document(self, document_id):
-            pass
-
-        async def index_custom_kg_documents(self, docs):
-            calls.append("kg")
-
-        async def save_indexed_team_ids(self, teams):
-            calls.append("snapshot")
-
-    async def insert(*args, **kwargs):
-        calls.append("body_written")
-        if outcome == "timeout":
-            raise TimeoutError("after partial write")
-        if outcome == "failure":
-            raise RuntimeError("after partial write")
-        return "tracking-id"
-
-    async def statuses(ids):
-        return [{"status": "processed" if item == "worklog-101" else "failed"} for item in ids]
-
-    async def initialized():
-        return SimpleNamespace(ainsert=insert, doc_status=SimpleNamespace(get_by_ids=statuses))
-
-    adapter = Adapter(settings_obj=Settings(_env_file=None))
-    adapter._get_initialized_rag = initialized
-    monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
-    monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-    response = asyncio.run(LightWorklogIndexService(cache=Cache()).index_worklogs([101, 102]))
-    if outcome == "mixed_status":
-        assert [(item.indexed, item.error) for item in response.items] == [
-            (True, None), (False, "LIGHTRAG_INSERT_FAILED"),
-        ]
-        assert calls == ["body_written", "kg", "snapshot", "body_written", "invalidate"]
-    else:
-        assert all(not item.indexed for item in response.items)
-        error = "LIGHTRAG_INSERT_TIMEOUT" if outcome == "timeout" else "LIGHTRAG_INSERT_FAILED"
-        assert all(item.error == error for item in response.items)
-        assert calls == ["body_written", "body_written", "invalidate"]
+def test_empty_batch_does_not_open_redis(monkeypatch):
+    monkeypatch.setattr(module, "Redis", SimpleNamespace(from_url=lambda url: pytest.fail("unexpected Redis")))
+    assert asyncio.run(module.LightWorklogIndexService().index_worklogs([])).items == []
 
 
 def test_mutation_lock_cancelled_waiter_releases_partial_batch_and_reversed_ids_finish():
@@ -269,7 +130,6 @@ def test_mutation_lock_cancelled_waiter_releases_partial_batch_and_reversed_ids_
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
-        # 취소된 다중 잠금 대기가 먼저 확보한 worklog:1을 남기지 않는다.
         await asyncio.wait_for(mutate(["worklog:1"]), timeout=1)
         release.set()
         await holder
@@ -278,525 +138,3 @@ def test_mutation_lock_cancelled_waiter_releases_partial_batch_and_reversed_ids_
         ), timeout=1)
 
     asyncio.run(run())
-
-
-def test_prefilter_index_saves_ownership_before_team_writes_and_delete_cleans_both(monkeypatch):
-    calls = []
-
-    class Reader:
-        async def fetch_source_rows(self, ids):
-            return {101: make_source_row(101)}
-
-    class Adapter(OwnershipAdapter):
-        async def index_documents(self, docs):
-            calls.append("legacy_text")
-
-        async def index_custom_kg_documents(self, docs):
-            calls.append("legacy_kg")
-
-        async def save_indexed_team_ids(self, teams):
-            assert teams == {101: 7}
-            calls.append("ownership")
-
-        async def get_document_team_id(self, doc_id, *, allow_missing=False):
-            assert doc_id == "worklog-101"
-            return 7
-
-        async def delete_document(self, doc_id):
-            calls.append("legacy_delete")
-
-    class TeamAdapter:
-        async def delete_document(self, doc_id):
-            calls.append("team_delete")
-
-    class TeamPool:
-        async def index_source_rows(self, rows):
-            assert [row.worklog_id for row in rows] == [101]
-            calls.append("team_index")
-
-        def adapter_for(self, team_id):
-            assert team_id == 7
-            return TeamAdapter()
-
-    monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
-    monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", Adapter)
-    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", TeamPool)
-    service = LightWorklogIndexService(
-        settings_obj=Settings(_env_file=None),
-    )
-
-    async def run():
-        indexed = await service.index_worklogs([101])
-        deleted = await service.delete_worklogs([101])
-        return indexed, deleted
-
-    indexed, deleted = asyncio.run(run())
-    assert indexed.items[0].indexed and deleted.items[0].deleted
-    assert calls == ["team_delete", "legacy_delete", "legacy_text", "legacy_kg", "ownership", "team_index",
-                     "team_delete", "legacy_delete"]
-
-
-@pytest.mark.parametrize("status", ["fail", "not_allowed"])
-def test_team_native_delete_failure_preserves_global_ownership(monkeypatch, status):
-    from types import SimpleNamespace
-    from lightrag.base import DeletionResult
-    from app.light.v4.service.lightrag_adapter import LightRagWorklogIndexAdapter
-
-    calls = []
-
-    class GlobalAdapter(OwnershipAdapter):
-        async def get_document_team_id(self, doc_id):
-            return 7
-
-        async def delete_document(self, doc_id):
-            calls.append("global_delete")
-
-    async def native_delete(doc_id):
-        calls.append("team_delete")
-        return DeletionResult(status=status, doc_id=doc_id, message="failed")
-
-    async def initialized():
-        return SimpleNamespace(adelete_by_doc_id=native_delete, doc_status=SimpleNamespace())
-
-    team_adapter = LightRagWorklogIndexAdapter(settings_obj=Settings(_env_file=None))
-    team_adapter._get_initialized_rag = initialized
-    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter",
-                        lambda: SimpleNamespace(adapter_for=lambda team: team_adapter))
-    service = LightWorklogIndexService(settings_obj=Settings(
-        _env_file=None,
-    ))
-    with pytest.raises(LightRagDeleteFailedError):
-        asyncio.run(service._delete_document(GlobalAdapter(), "worklog-101"))
-    assert calls == ["team_delete"]
-
-
-def make_source_row(worklog_id: int) -> LightWorklogSourceRow:
-    return LightWorklogSourceRow(
-        worklog_id=worklog_id,
-        title=f"업무 {worklog_id}",
-        request_content="요청",
-        work_content="수행",
-        author_id=5,
-        author_name="김도윤",
-        team_id=7,
-        team_name="정산 고도화 TF",
-        tags=[LightWorklogTag(tag_id=11, tag_name="정산", description=None)],
-        direct_predecessors=[LightWorklogPredecessor(worklog_id=88, title="직접 선행")],
-    )
-
-
-def test_index_service_calls_text_and_custom_kg_from_one_source_fetch(monkeypatch) -> None:
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            assert worklog_ids == [101, 102]
-            return {101: make_source_row(101), 102: make_source_row(102)}
-
-    class _Adapter(OwnershipAdapter):
-        def __init__(self) -> None:
-            self.text_document_ids: list[str] = []
-            self.custom_document_ids: list[str] = []
-
-        async def index_documents(self, documents) -> None:
-            self.text_document_ids.extend(document.document_id for document in documents)
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            self.custom_document_ids.extend(document.document_id for document in documents)
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        response = await LightWorklogIndexService().index_worklogs([101, 102])
-
-        assert adapter.text_document_ids == ["worklog-101", "worklog-102"]
-        assert adapter.custom_document_ids == ["worklog-101", "worklog-102"]
-        assert adapter.saved_teams == {101: 7, 102: 7}
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": True, "error": None},
-            {"worklogId": 102, "indexed": True, "error": None},
-        ]
-
-    asyncio.run(run_case())
-
-
-def test_reindex_reads_new_source_after_inflight_index_finishes() -> None:
-    from dataclasses import replace
-
-    async def run_case() -> None:
-        prepared_a, release_a, started_b = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        row = replace(make_source_row(101), title="version A")
-        reads = []
-        writes = []
-        team_writes = []
-
-        class Reader:
-            async def fetch_source_rows(self, ids):
-                assert ids == [101]
-                reads.append(row.title)
-                return {101: row}
-
-        class Adapter(OwnershipAdapter):
-            async def delete_document(self, document_id):
-                writes.append(("delete", document_id))
-
-            async def index_documents(self, docs):
-                writes.append(("text", docs[0].text))
-
-            async def index_custom_kg_documents(self, docs):
-                targets = {r["tgt_id"] for r in docs[0].custom_kg["relationships"]}
-                writes.append(("kg", targets))
-
-        class TeamPool:
-            def adapter_for(self, team_id):
-                assert team_id == 7
-                return OwnershipAdapter()
-
-            async def index_source_rows(self, rows):
-                team_writes.append((rows[0].title, [tag.tag_id for tag in rows[0].tags]))
-
-        class PausedService(LightWorklogIndexService):
-            async def _index_found_documents(self, prepared):
-                if not prepared_a.is_set():
-                    prepared_a.set()
-                    await asyncio.wait_for(release_a.wait(), timeout=5)
-                return await super()._index_found_documents(prepared)
-
-        adapter, pool, reader = Adapter(), TeamPool(), Reader()
-        service = PausedService(adapter_factory=lambda: adapter, team_adapter_factory=lambda: pool,
-                                source_reader=reader)
-        task_a = asyncio.create_task(service.index_worklogs([101]))
-        await asyncio.wait_for(prepared_a.wait(), timeout=5)
-        row = replace(row, title="version B", tags=[LightWorklogTag(22, "new tag", None)])
-
-        async def run_b():
-            started_b.set()
-            return await service.reindex_worklogs([101])
-
-        task_b = asyncio.create_task(run_b())
-        try:
-            await asyncio.wait_for(started_b.wait(), timeout=5)
-            assert reads == ["version A"]
-            assert not task_b.done()
-            release_a.set()
-            result_a, result_b = await asyncio.wait_for(asyncio.gather(task_a, task_b), timeout=5)
-        finally:
-            release_a.set()
-            for task in (task_a, task_b):
-                if not task.done():
-                    task.cancel()
-
-        assert result_a.items[0].indexed and result_b.items[0].indexed
-        assert reads == ["version A", "version B"]
-        assert writes[0] == ("delete", "worklog-101")
-        assert "title: version A" in writes[1][1]
-        assert "Tag:11" in writes[2][1] and "Tag:22" not in writes[2][1]
-        assert writes[3] == ("delete", "worklog-101")
-        assert "title: version B" in writes[4][1]
-        assert "Tag:22" in writes[5][1] and "Tag:11" not in writes[5][1]
-        assert team_writes == [("version A", [11]), ("version B", [22])]
-
-    asyncio.run(run_case())
-
-
-def test_index_service_maps_custom_kg_batch_failure_to_all_found_ids(monkeypatch) -> None:
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {101: make_source_row(101), 103: make_source_row(103)}
-
-    class _Adapter(OwnershipAdapter):
-        async def index_documents(self, documents) -> None:
-            assert len(documents) == 1
-            assert documents[0].document_id in {"worklog-101", "worklog-103"}
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            assert len(documents) == 1
-            assert documents[0].document_id in {"worklog-101", "worklog-103"}
-            raise LightRagInsertTimeoutError("timeout")
-
-    async def run_case() -> None:
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: _Adapter())
-
-        response = await LightWorklogIndexService().index_worklogs([101, 102, 103])
-
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_INSERT_TIMEOUT"},
-            {"worklogId": 102, "indexed": False, "error": "WORKLOG_NOT_FOUND"},
-            {"worklogId": 103, "indexed": False, "error": "LIGHTRAG_INSERT_TIMEOUT"},
-        ]
-
-    asyncio.run(run_case())
-
-
-def test_index_service_maps_text_batch_failure_to_all_found_ids(monkeypatch) -> None:
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {101: make_source_row(101), 103: make_source_row(103)}
-
-    class _Adapter(OwnershipAdapter):
-        def __init__(self) -> None:
-            self.custom_calls = 0
-
-        async def index_documents(self, documents) -> None:
-            raise LightRagInsertFailedError("failed")
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            self.custom_calls += 1
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        response = await LightWorklogIndexService().index_worklogs([101, 102, 103])
-
-        assert adapter.custom_calls == 0
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_INSERT_FAILED"},
-            {"worklogId": 102, "indexed": False, "error": "WORKLOG_NOT_FOUND"},
-            {"worklogId": 103, "indexed": False, "error": "LIGHTRAG_INSERT_FAILED"},
-        ]
-
-    asyncio.run(run_case())
-
-
-def test_reindex_service_deletes_first_and_bumps_cache_version(monkeypatch) -> None:
-    calls: list[str] = []
-
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {101: make_source_row(101)}
-
-    class _Adapter(OwnershipAdapter):
-        async def delete_document(self, document_id: str) -> None:
-            calls.append(f"delete:{document_id}")
-
-        async def index_documents(self, documents) -> None:
-            calls.append(f"index_docs:{[d.document_id for d in documents]}")
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            calls.append(f"index_kg:{[d.document_id for d in documents]}")
-
-    class _FakeCache:
-        def __init__(self) -> None:
-            self.bump_count = 0
-
-        async def bump_version(self) -> int:
-            self.bump_count += 1
-            calls.append("bump_version")
-            return 2
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        cache = _FakeCache()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        service = LightWorklogIndexService(cache=cache)  # type: ignore
-        response = await service.reindex_worklogs([101])
-
-        assert calls == [
-            "delete:worklog-101",
-            "index_docs:['worklog-101']",
-            "index_kg:['worklog-101']",
-            "bump_version",
-        ]
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": True, "error": None}
-        ]
-        assert cache.bump_count == 1
-
-    asyncio.run(run_case())
-
-
-def test_delete_service_deletes_documents_and_bumps_cache_version(monkeypatch) -> None:
-    deleted_ids: list[str] = []
-
-    class _Adapter(OwnershipAdapter):
-        async def delete_document(self, document_id: str) -> None:
-            deleted_ids.append(document_id)
-
-    class _FakeCache:
-        def __init__(self) -> None:
-            self.bump_count = 0
-
-        async def bump_version(self) -> int:
-            self.bump_count += 1
-            return 3
-
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {}
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        cache = _FakeCache()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        service = LightWorklogIndexService(cache=cache)  # type: ignore
-        response = await service.delete_worklogs([101, 102])
-
-        assert deleted_ids == ["worklog-101", "worklog-102"]
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "deleted": True, "error": None},
-            {"worklogId": 102, "deleted": True, "error": None},
-        ]
-        assert cache.bump_count == 1
-
-    asyncio.run(run_case())
-
-
-def test_reindex_service_records_delete_failure_and_skips_insert(monkeypatch) -> None:
-    calls: list[str] = []
-
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {101: make_source_row(101)}
-
-    class _Adapter(OwnershipAdapter):
-        async def delete_document(self, document_id: str) -> None:
-            calls.append(f"delete:{document_id}")
-            if document_id == "worklog-102":
-                raise LightRagDeleteTimeoutError("timeout")
-
-        async def index_documents(self, documents) -> None:
-            calls.append(f"index_docs:{[d.document_id for d in documents]}")
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            calls.append(f"index_kg:{[d.document_id for d in documents]}")
-
-    class _FakeCache:
-        def __init__(self) -> None:
-            self.bump_count = 0
-
-        async def bump_version(self) -> int:
-            self.bump_count += 1
-            calls.append("bump_version")
-            return 2
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        cache = _FakeCache()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        service = LightWorklogIndexService(cache=cache)  # type: ignore
-        response = await service.reindex_worklogs([101, 102])
-
-        assert calls == [
-            "delete:worklog-102",
-            "delete:worklog-101",
-            "index_docs:['worklog-101']",
-            "index_kg:['worklog-101']",
-            "bump_version",
-        ]
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": True, "error": None},
-            {"worklogId": 102, "indexed": False, "error": "LIGHTRAG_DELETE_TIMEOUT"},
-        ]
-        assert cache.bump_count == 1
-
-    asyncio.run(run_case())
-
-
-def test_reindex_service_all_delete_failures_invalidates_cache_and_returns_errors(monkeypatch) -> None:
-    calls: list[str] = []
-
-    class _Adapter(OwnershipAdapter):
-        async def delete_document(self, document_id: str) -> None:
-            calls.append(f"delete:{document_id}")
-            raise LightRagDeleteFailedError("failed")
-
-        async def index_documents(self, documents) -> None:
-            calls.append("index_docs")
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            calls.append("index_kg")
-
-    class _FakeCache:
-        def __init__(self) -> None:
-            self.bump_count = 0
-
-        async def bump_version(self) -> int:
-            self.bump_count += 1
-            return 2
-
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {}
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        cache = _FakeCache()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        service = LightWorklogIndexService(cache=cache)  # type: ignore
-        response = await service.reindex_worklogs([101])
-
-        assert calls == ["delete:worklog-101"]
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_DELETE_FAILED"}
-        ]
-        assert cache.bump_count == 1
-
-    asyncio.run(run_case())
-
-
-def test_index_delete_failure_after_confirmed_compensation_has_distinct_error(monkeypatch):
-    class Reader:
-        async def fetch_source_rows(self, ids):
-            return {101: make_source_row(101)}
-
-    class Adapter(OwnershipAdapter):
-        async def delete_document(self, document_id):
-            raise LightRagDeleteFailedError("delete failed")
-
-    class Pool:
-        def adapter_for(self, team_id):
-            return OwnershipAdapter()
-
-    monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", Reader)
-    monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", Adapter)
-    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter", Pool)
-    result = asyncio.run(LightWorklogIndexService().index_worklogs([101]))
-    assert result.items[0].error == "LIGHTRAG_DELETE_FAILED_COMPENSATED"
-
-
-def test_index_service_custom_kg_failure_still_bumps_cache_version(monkeypatch) -> None:
-    class _Reader:
-        async def fetch_source_rows(self, worklog_ids: list[int]):
-            return {101: make_source_row(101)}
-
-    class _Adapter(OwnershipAdapter):
-        async def index_documents(self, documents) -> None:
-            assert [d.document_id for d in documents] == ["worklog-101"]
-
-        async def index_custom_kg_documents(self, documents) -> None:
-            raise LightRagInsertTimeoutError("timeout")
-
-    class _FakeCache:
-        def __init__(self) -> None:
-            self.bump_count = 0
-
-        async def bump_version(self) -> int:
-            self.bump_count += 1
-            return 2
-
-    async def run_case() -> None:
-        adapter = _Adapter()
-        cache = _FakeCache()
-        monkeypatch.setattr(service_module, "WorklogLightSourceRowReader", _Reader)
-        monkeypatch.setattr(service_module, "get_lightrag_worklog_index_adapter", lambda: adapter)
-
-        service = LightWorklogIndexService(cache=cache)  # type: ignore
-        response = await service.index_worklogs([101])
-
-        assert [item.model_dump(by_alias=True) for item in response.items] == [
-            {"worklogId": 101, "indexed": False, "error": "LIGHTRAG_INSERT_TIMEOUT"}
-        ]
-        assert cache.bump_count == 1
-
-    asyncio.run(run_case())

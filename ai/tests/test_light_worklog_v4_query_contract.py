@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from app.config.settings import Settings
 from app.light.v4.model.worklog_query import WorklogLightQueryRequest
@@ -13,13 +14,19 @@ from app.light.v4.service.lightrag_adapter import (
 )
 from app.light.v4.service.worklog_query_cache import WorklogQueryCache
 from app.light.v4.service.worklog_query_service import LightWorklogQueryService
-from tests.test_light_worklog_v4_query_service import fake_indexed_rows
+from tests.test_light_worklog_v4_query_service import CopyPool, fake_indexed_rows
 
 
 _DEFAULT_ITERATOR = object()
 
 
-class FakeAdapter:
+@pytest.mark.parametrize("teams", [None, []])
+def test_query_request_rejects_null_and_empty_team_ids(teams):
+    with pytest.raises(ValidationError):
+        WorklogLightQueryRequest.model_validate({"query": "q", "allowedTeamIds": teams})
+
+
+class FakeAdapter(CopyPool):
     def __init__(self, *, answer: Any = " answer ", iterator: Any = _DEFAULT_ITERATOR,
                  data: dict[str, Any] | None = None) -> None:
         self.answer = answer
@@ -32,7 +39,7 @@ class FakeAdapter:
         self.calls: list[LightRagQueryOptions] = []
         self.prompts: list[str] = []
 
-    async def query_data(self, options: LightRagQueryOptions) -> dict[str, Any]:
+    async def query_data(self, options: LightRagQueryOptions, copies) -> dict[str, Any]:
         self.calls.append(options)
         return self.data
 
@@ -53,13 +60,13 @@ class FakeAdapter:
 
 def make_request(**overrides: Any) -> WorklogLightQueryRequest:
     return WorklogLightQueryRequest.model_validate(
-        {"query": "업무일지 요약", "allowedTeamIds": None, **overrides},
+        {"query": "업무일지 요약", "allowedTeamIds": [101, 102], **overrides},
     )
 
 
 def service(adapter, settings=None):
     return LightWorklogQueryService(
-        settings_obj=settings or Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=settings or Settings(_env_file=None),
         team_adapter_factory=lambda: adapter,
     )
 
@@ -161,11 +168,9 @@ def test_query_service_passes_rerank_model_override():
 def test_query_service_empty_allowed_team_ids_skips_adapter():
     def unexpected():
         raise AssertionError("Empty scope must not initialize adapters")
-    query_service = LightWorklogQueryService(adapter_factory=unexpected,
-                                            team_adapter_factory=unexpected)
-    response = asyncio.run(query_service.query_worklogs(make_request(allowedTeamIds=[])))
-    assert response.answer == ""
-    assert response.references == []
+    query_service = LightWorklogQueryService(team_adapter_factory=unexpected)
+    with pytest.raises(ValidationError):
+        asyncio.run(query_service.query_worklogs(make_request(allowedTeamIds=[])))
 
 
 @pytest.mark.parametrize("content", [None, "", "   ", 42])
@@ -218,10 +223,10 @@ def test_query_service_stream_enforces_token_timeout():
 @pytest.mark.parametrize("stage", ["retrieve", "database", "generate"])
 def test_stream_deadline_includes_context_lookup_and_generation(stage):
     class SlowAdapter(FakeAdapter):
-        async def query_data(self, options):
+        async def query_data(self, options, copies):
             if stage == "retrieve":
                 await asyncio.sleep(0.05)
-            return await super().query_data(options)
+            return await super().query_data(options, copies)
 
         async def read_source_rows(self, ids, scope):
             if stage == "database":
