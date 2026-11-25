@@ -53,11 +53,11 @@ public class LightRagWorklogSearchService {
     }
 
     /**
-     * DIRECTOR는 전사 인덱스를 사용하고, 팀 제한 검색은 기존 권한 조회에서 업무가 없는 팀을 제외한다.
+     * 모든 권한 범위에서 조회 가능한 업무가 있는 팀만 AI 검색에 전달한다.
      */
     private List<Long> resolveAllowedTeamIds(WorklogVisibilityScope scope) {
         return switch (scope) {
-            case WorklogVisibilityScope.All ignored -> null;
+            case WorklogVisibilityScope.All ignored -> worklogRepository.findVisibleTeamIds(scope);
             case WorklogVisibilityScope.Department ignored -> worklogRepository.findVisibleTeamIds(scope);
             case WorklogVisibilityScope.MyTeams ignored -> worklogRepository.findVisibleTeamIds(scope);
         };

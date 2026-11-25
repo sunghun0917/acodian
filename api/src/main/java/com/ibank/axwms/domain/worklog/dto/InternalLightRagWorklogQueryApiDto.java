@@ -20,7 +20,7 @@ public final class InternalLightRagWorklogQueryApiDto {
         public static Request of(String query, List<Long> allowedTeamIds) {
             return new Request(
                     query,
-                    allowedTeamIds == null ? null : List.copyOf(allowedTeamIds)
+                    List.copyOf(allowedTeamIds)
             );
         }
     }
