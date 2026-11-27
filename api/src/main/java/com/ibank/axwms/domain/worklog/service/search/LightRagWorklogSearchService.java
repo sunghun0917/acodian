@@ -42,7 +42,7 @@ public class LightRagWorklogSearchService {
 
         WorklogVisibilityScope scope = worklogVisibilityPolicy.resolve(principal);
         List<Long> allowedTeamIds = resolveAllowedTeamIds(scope);
-        if (allowedTeamIds != null && allowedTeamIds.isEmpty()) {
+        if (allowedTeamIds.isEmpty()) {
             return new SearchSemanticWorklogsApiDto.Response("", List.of());
         }
 
