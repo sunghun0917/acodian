@@ -9,7 +9,7 @@ from app.config.settings import Settings
 from app.light.v4.model.worklog_query import WorklogLightQueryRequest
 from app.light.v4.service.lightrag_adapter import LightRagQueryFailedError
 from app.light.v4.service.worklog_query_service import LightWorklogQueryService
-from tests.test_light_worklog_v4_query_service import fake_indexed_rows
+from tests.test_light_worklog_v4_query_service import CopyPool, fake_indexed_rows
 
 
 class SafetyAdapter:
@@ -17,7 +17,7 @@ class SafetyAdapter:
         self.events = []
         self.prompts = []
 
-    async def query_data(self, options):
+    async def query_data(self, options, copies):
         self.events.append("retrieve")
         return {"status": "success", "data": {"chunks": [
             {"file_path": "worklog://1", "content": "STALE_INDEX_BODY"},
@@ -41,21 +41,26 @@ class SafetyAdapter:
 
 
 @pytest.mark.parametrize("stream", [False, True])
-def test_global_query_validates_before_generation_and_ignores_index_content(stream):
+def test_all_allowed_teams_query_validates_before_generation_and_ignores_index_content(stream):
     adapter = SafetyAdapter()
 
-    class SourcePool:
+    class SourcePool(CopyPool):
+        generator = adapter
+
+        async def query_data(self, options, copies):
+            return await adapter.query_data(options, copies)
+
         async def read_source_rows(self, ids, scope):
-            assert scope is None
+            assert scope == {101: "a", 102: "a"}
             assert ids == [1, 2]
             adapter.events.append("validate")
             return await fake_indexed_rows([1])
 
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=SourcePool,
     )
-    request = WorklogLightQueryRequest(query="진행상황", allowedTeamIds=None)
+    request = WorklogLightQueryRequest(query="진행상황", allowedTeamIds=[101, 102])
 
     async def run():
         if stream:
@@ -77,10 +82,15 @@ def test_global_query_validates_before_generation_and_ignores_index_content(stre
 
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("source_failure", [False, True])
-def test_global_query_does_not_generate_without_verified_rows(stream, source_failure):
+def test_all_allowed_teams_query_does_not_generate_without_verified_rows(stream, source_failure):
     adapter = SafetyAdapter()
 
-    class SourcePool:
+    class SourcePool(CopyPool):
+        generator = adapter
+
+        async def query_data(self, options, copies):
+            return await adapter.query_data(options, copies)
+
         async def read_source_rows(self, ids, scope):
             adapter.events.append("validate")
             if source_failure:
@@ -88,10 +98,10 @@ def test_global_query_does_not_generate_without_verified_rows(stream, source_fai
             return {}
 
     service = LightWorklogQueryService(
-        settings_obj=Settings(_env_file=None), adapter_factory=lambda: adapter,
+        settings_obj=Settings(_env_file=None),
         team_adapter_factory=SourcePool,
     )
-    request = WorklogLightQueryRequest(query="진행상황", allowedTeamIds=None)
+    request = WorklogLightQueryRequest(query="진행상황", allowedTeamIds=[101, 102])
 
     async def run():
         if stream:

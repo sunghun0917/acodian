@@ -56,33 +56,17 @@ def test_native_pg_delete_verifies_records_are_absent(monkeypatch, tmp_path):
         asyncio.run(rag.full_docs.delete(["worklog-1"]))
 
 
-def test_failed_team_pg_delete_does_not_remove_global_ownership(monkeypatch, tmp_path):
-    from app.light.v4.service import worklog_index_service as service_module
-    rag = native_rag(monkeypatch, tmp_path)
-    class DB:
-        async def execute(self, *args, **kwargs):
-            raise RuntimeError("injected DELETE failure")
-    rag.full_docs.db = DB()
-    async def native_delete(doc_id):
-        await rag.full_docs.delete([doc_id])
-        return {"status": "success"}
-    rag.adelete_by_doc_id = native_delete
-    adapter = LightRagWorklogIndexAdapter(settings_obj=make_settings())
-    async def initialized():
-        return rag
-    adapter._get_initialized_rag = initialized
-    removed = []
-    class Global:
-        async def get_document_team_id(self, doc_id):
-            return 10
-        async def delete_document(self, doc_id):
-            removed.append(doc_id)
-    monkeypatch.setattr(service_module, "get_lightrag_team_scope_adapter",
-                        lambda: SimpleNamespace(adapter_for=lambda team: adapter))
-    service = service_module.LightWorklogIndexService(cache=SimpleNamespace())
+def test_failed_team_copy_delete_preserves_pointer_and_read_copy():
+    from tests.test_light_worklog_team_copy_writer import Scenario, row
+    s = Scenario()
+    s.seed_both(row())
+    s.current.clear()
+    s.pool.fail_delete = True
     with pytest.raises(LightRagDeleteFailedError):
-        asyncio.run(service._delete_document(Global(), "worklog-1"))
-    assert removed == []
+        asyncio.run(s.writer.sync_worklog(7))
+    assert s.store.pointers == {}
+    assert s.snapshot(3, "a").title == "v3"
+    assert "worklog-7" in s.pool.adapter_for(3, "a").documents
 
 
 @pytest.mark.parametrize("name,table", [

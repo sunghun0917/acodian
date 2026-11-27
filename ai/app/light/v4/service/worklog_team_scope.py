@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import replace
 from typing import Any
 
@@ -14,15 +15,19 @@ from app.light.v4.service.lightrag_adapter import (
     LightRagConfigurationError,
     LightRagQueryFailedError,
     LightRagQueryOptions,
+    LightRagQueryTimeoutError,
     LightRagWorklogIndexAdapter,
-    get_lightrag_worklog_index_adapter,
 )
+from app.light.v4.service.worklog_team_copy_lock import TeamCopyLocks
 from app.light.v4.service.worklog_custom_kg_builder import build_worklog_custom_kg_document
 from app.light.v4.service.worklog_custom_kg_source_reader import to_light_worklog_custom_kg_source
 from app.light.v4.service.worklog_document_builder import build_worklog_light_document
 from app.light.v4.service.worklog_source_reader import to_light_worklog_source
 from app.light.v4.service.worklog_source_row_reader import WorklogLightSourceRowReader
 from app.light.v4.store.worklog_source_store import LightWorklogSourceRow
+from app.light.v4.store.worklog_team_copy_store import (
+    TeamCopy, WorklogTeamCopyStore, get_worklog_team_copy_store,
+)
 
 
 class LightRagTeamScopeAdapter:
@@ -32,31 +37,40 @@ class LightRagTeamScopeAdapter:
         self, *, settings_obj: Settings = settings,
         adapter_factory: Callable[..., Any] = LightRagWorklogIndexAdapter,
         source_reader: WorklogLightSourceRowReader | None = None,
-        global_adapter_factory: Callable[..., Any] | None = None,
+        store: WorklogTeamCopyStore | None = None,
+        locks: TeamCopyLocks | None = None,
     ) -> None:
         """같은 서버/working directory 안에 버전별 팀 workspace를 구성한다."""
         self._settings = settings_obj.model_copy(deep=True)
         self._adapter_factory = adapter_factory
         self._source_reader = source_reader or WorklogLightSourceRowReader()
-        self._global_adapter_factory = global_adapter_factory or get_lightrag_worklog_index_adapter
-        self._adapters: dict[int, Any] = {}
+        self._store = store if store is not None else get_worklog_team_copy_store()
+        self._locks = locks if locks is not None else TeamCopyLocks(settings_obj=self._settings)
+        self._adapters: dict[tuple[int, TeamCopy], Any] = {}
         base = json.dumps([
             self._settings.lightrag_workspace.strip(), self._settings.lightrag_embedding_model,
             self._settings.embedding_dim,
         ], separators=(",", ":"))
         self._base_hash = hashlib.sha256(base.encode()).hexdigest()[:16]
 
-    def adapter_for(self, team_id: int) -> Any:
+    def adapter_for(self, team_id: int, copy: TeamCopy = "a") -> Any:
         """외부 label/path를 받지 않고 검증된 팀 ID로만 adapter를 생성한다."""
         if type(team_id) is not int or team_id <= 0:
             raise LightRagConfigurationError("Team scope requires a positive integer ID")
-        if team_id not in self._adapters:
+        if copy not in ("a", "b"):
+            raise LightRagConfigurationError("Team copy must be a or b")
+        key = (team_id, copy)
+        if key not in self._adapters:
             workspace = f"worklog_scope_v1_{self._base_hash}_team_{team_id}"
+            shared = {}
+            if copy == "b":
+                workspace += "_b"
+                shared["shared_llm_cache_from"] = self.adapter_for(team_id, "a")
             scoped_settings = self._settings.model_copy(update={"lightrag_workspace": workspace})
-            self._adapters[team_id] = self._adapter_factory(
-                settings_obj=scoped_settings, expected_workspace=workspace,
+            self._adapters[key] = self._adapter_factory(
+                settings_obj=scoped_settings, expected_workspace=workspace, **shared,
             )
-        return self._adapters[team_id]
+        return self._adapters[key]
 
     async def index_source_rows(self, rows: list[LightWorklogSourceRow]) -> None:
         """본문과 팀 내 확정 KG를 같은 workspace에 색인한다."""
@@ -77,8 +91,22 @@ class LightRagTeamScopeAdapter:
                 for row in kg_rows
             ])
 
+    @asynccontextmanager
+    async def read_copies(self, team_ids: tuple[int, ...]) -> AsyncIterator[dict[int, TeamCopy]]:
+        """모든 허용 팀 사본을 빌리고 문맥 생성 종료와 예외 시 함께 반환한다."""
+        try:
+            async with AsyncExitStack() as stack:
+                copies = {}
+                for team in sorted(set(team_ids)):
+                    copies[team] = await stack.enter_async_context(self._locks.read_copy(team, self._store))
+                yield copies
+        except (LightRagConfigurationError, LightRagQueryFailedError, LightRagQueryTimeoutError):
+            raise
+        except Exception as exc:
+            raise LightRagQueryFailedError("Team read copy lookup failed") from exc
+
     async def query_data(
-        self, options: LightRagQueryOptions, allowed_team_ids: tuple[int, ...],
+        self, options: LightRagQueryOptions, copies: dict[int, TeamCopy],
     ) -> dict[str, Any]:
         """허용 팀 안에서만 검색한 후보를 합치며 실패 시 전역 검색으로 우회하지 않는다."""
         data: dict[str, list[Any]] = {
@@ -86,16 +114,18 @@ class LightRagTeamScopeAdapter:
         }
 
         async def retrieve(team_id: int) -> dict[str, Any]:
-            adapter = self.adapter_for(team_id)
+            adapter = self.adapter_for(team_id, copies[team_id])
             return await adapter.query_data(options)
 
+        tasks = [asyncio.create_task(retrieve(team)) for team in sorted(copies)]
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*(retrieve(team_id) for team_id in sorted(set(allowed_team_ids)))),
-                timeout=self._settings.lightrag_query_timeout_seconds,
-            )
-        except TimeoutError as exc:
-            raise LightRagQueryFailedError("Team-scoped retrieval timed out") from exc
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            # 실패한 팀의 형제 검색도 끝내야 사본 읽기 토큰을 반환할 수 있다.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         for result in results:
             if (isinstance(result, dict) and result.get("status") == "failure"
                     and isinstance(result.get("metadata"), dict)
@@ -124,44 +154,37 @@ class LightRagTeamScopeAdapter:
                 raise result
 
     async def read_source_rows(
-        self, worklog_ids: list[int], allowed_team_ids: tuple[int, ...] | None,
+        self, worklog_ids: list[int], copies: dict[int, TeamCopy],
     ) -> dict[int, LightWorklogSourceRow]:
-        """전역 완료·팀 native 처리 상태·최신 DB 생존 및 소속을 함께 검증한다."""
-        if not worklog_ids or allowed_team_ids == ():
+        """사본의 READY 내용만 쓰며 생존 여부와 현재 팀은 업무 DB로 확인한다."""
+        if not worklog_ids or not copies:
             return {}
 
-        async def read() -> dict[int, LightWorklogSourceRow]:
-            global_adapter = self._global_adapter_factory()
-            completed = await global_adapter.get_processed_worklog_ids(worklog_ids)
-            candidates = [item for item in dict.fromkeys(worklog_ids)
-                          if item in completed]
-            if not candidates:
+        try:
+            candidates = list(dict.fromkeys(worklog_ids))
+            snapshots = {}
+            for team, copy in copies.items():
+                entries = await self._store.entries(team, copy, candidates)
+                for worklog_id, entry in entries.items():
+                    row = entry.snapshot
+                    if entry.state != "READY" or row is None:
+                        continue
+                    if (worklog_id not in candidates or entry.worklog_id != worklog_id
+                            or entry.team_id != team or entry.copy != copy
+                            or row.worklog_id != worklog_id or row.team_id != team):
+                        raise ValueError("Snapshot identity mismatch")
+                    snapshots[team, worklog_id] = row
+            if not snapshots:
                 return {}
             current = await self._source_reader.fetch_source_rows(candidates)
             selected = {}
             for worklog_id, row in current.items():
                 if row.worklog_id != worklog_id or worklog_id not in candidates:
                     raise ValueError("Source identity mismatch")
-                if allowed_team_ids is None or row.team_id in allowed_team_ids:
-                    selected[worklog_id] = row
-            owners = await asyncio.gather(*(
-                global_adapter.get_document_team_id(f"worklog-{key}") for key in selected
-            ))
-            selected = {key: row for (key, row), owner in zip(selected.items(), owners)
-                        if owner == row.team_id}
-            teams = sorted({row.team_id for row in selected.values()})
-            processed = await asyncio.gather(*(
-                self.adapter_for(team).get_processed_worklog_ids(list(selected), require_completed=False)
-                for team in teams
-            ))
-            by_team = dict(zip(teams, processed))
-            # DB 조회 중 시작된 재색인/삭제도 완료 게이트로 다시 차단한다.
-            still_completed = await global_adapter.get_processed_worklog_ids(list(selected))
-            return {key: row for key, row in selected.items()
-                    if key in still_completed and key in by_team[row.team_id]}
-
-        try:
-            return await asyncio.wait_for(read(), timeout=self._settings.lightrag_query_timeout_seconds)
+                snapshot = snapshots.get((row.team_id, worklog_id))
+                if row.team_id in copies and snapshot is not None:
+                    selected[worklog_id] = snapshot
+            return selected
         except (LightRagConfigurationError, LightRagQueryFailedError):
             raise
         except Exception as exc:

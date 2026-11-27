@@ -85,6 +85,44 @@ def test_pg_workspace_mismatch_after_initialization_cleans_up():
     assert rag.chunks_vdb._client is None and not rag.chunks_vdb._initialized
 
 
+@pytest.mark.parametrize("scenario", ["pages", "empty", "rag_mismatch", "doc_status_mismatch"])
+def test_list_document_ids_reads_all_pages_only_from_validated_workspace(scenario):
+    calls = []
+
+    class PaginatedRag(StorageRag):
+        async def initialize_storages(self):
+            if scenario == "rag_mismatch":
+                self.workspace = "other-team"
+            elif scenario == "doc_status_mismatch":
+                self.doc_status.workspace = "other-team"
+
+            async def get_docs_paginated(**kwargs):
+                calls.append(kwargs)
+                if scenario == "empty":
+                    return [], 0
+                return {
+                    1: ([("file-9", {}), ("worklog-7", {"status": "processed"})], 3),
+                    2: ([("worklog-8", {"status": "failed"})], 3),
+                }[kwargs["page"]]
+
+            self.doc_status.get_docs_paginated = get_docs_paginated
+
+    dependencies, *_ = make_dependencies(PaginatedRag)
+    adapter = module.LightRagWorklogIndexAdapter(settings_obj=configured(), dependencies=dependencies)
+    if scenario.endswith("mismatch"):
+        with pytest.raises(module.LightRagConfigurationError, match="workspace"):
+            asyncio.run(adapter.list_document_ids())
+        assert calls == []
+    else:
+        assert asyncio.run(adapter.list_document_ids()) == (
+            [] if scenario == "empty" else ["file-9", "worklog-7", "worklog-8"]
+        )
+        assert calls == [
+            {"page": page, "page_size": 200, "sort_field": "id", "sort_direction": "asc"}
+            for page in ([1] if scenario == "empty" else [1, 2])
+        ]
+
+
 @pytest.mark.parametrize("dsn", ["", "invalid-secret", "mysql://rag:secret@localhost/rag",
                                  "postgresql://rag:secret@localhost/axwms"])
 def test_pg_invalid_dsn_does_not_expose_credentials(dsn):
@@ -110,3 +148,85 @@ def test_empty_base_workspace_is_rejected_before_storage_construction():
     with pytest.raises(module.LightRagConfigurationError, match="workspace"):
         module.LightRagWorklogIndexAdapter(settings_obj=configured(lightrag_workspace=""),
                                          dependencies=dependencies)._build_lightrag()
+
+
+def test_workspace_check_allows_only_llm_cache_to_be_shared():
+    owner = module.LightRagWorklogIndexAdapter(settings_obj=configured(lightrag_workspace="team_3"))
+    adapter = module.LightRagWorklogIndexAdapter(
+        settings_obj=configured(lightrag_workspace="team_3_b"), shared_llm_cache_from=owner,
+    )
+    rag = StorageRag(workspace="team_3_b")
+    rag.llm_response_cache.workspace = "team_3"
+    adapter._verify_storage_workspaces(rag)
+    for name in module._SCOPE_STORAGE_NAMES:
+        if name == "llm_response_cache":
+            continue
+        storage = getattr(rag, name)
+        storage.workspace = "team_3"
+        with pytest.raises(module.LightRagConfigurationError, match=name):
+            adapter._verify_storage_workspaces(rag)
+        storage.workspace = "team_3_b"
+    rag.llm_response_cache.workspace = "team_4"
+    with pytest.raises(module.LightRagConfigurationError, match="llm_response_cache"):
+        adapter._verify_storage_workspaces(rag)
+
+
+def test_shared_cache_is_wrapped_and_not_finalized_by_b():
+    class LifecycleRag(StorageRag):
+        async def initialize_storages(self):
+            self.calls.append("initialize_storages")
+
+        async def finalize_storages(self):
+            for name in module._SCOPE_STORAGE_NAMES:
+                storage = getattr(self, name, None)
+                if storage is not None:
+                    await storage.finalize()
+
+    dependencies, *_ = make_dependencies(LifecycleRag)
+    owner = module.LightRagWorklogIndexAdapter(
+        settings_obj=configured(lightrag_workspace="team_3"), dependencies=dependencies,
+    )
+    adapter = module.LightRagWorklogIndexAdapter(
+        settings_obj=configured(lightrag_workspace="team_3_b"), dependencies=dependencies,
+        shared_llm_cache_from=owner,
+    )
+
+    async def run():
+        a, b = await asyncio.gather(owner._get_initialized_rag(), adapter._get_initialized_rag())
+        assert b.llm_response_cache is a.llm_response_cache
+        assert isinstance(b.llm_response_cache, module.ValidatedWorklogExtractionCache)
+        await adapter.close()
+        assert "llm_response_cache" not in a.closed_stores
+        await owner.close()
+        assert a.closed_stores.count("llm_response_cache") == 1
+
+    asyncio.run(run())
+
+
+def test_failed_copy_b_initialization_does_not_close_copy_a_cache():
+    class OverriddenB(StorageRag):
+        async def initialize_storages(self):
+            if self.workspace == "team_3_b":
+                self.text_chunks.workspace = "other-team"
+
+    dependencies, *_ = make_dependencies(OverriddenB)
+    owner = module.LightRagWorklogIndexAdapter(
+        settings_obj=configured(lightrag_workspace="team_3"), dependencies=dependencies,
+    )
+    adapter = module.LightRagWorklogIndexAdapter(
+        settings_obj=configured(lightrag_workspace="team_3_b"), dependencies=dependencies,
+        shared_llm_cache_from=owner,
+    )
+
+    async def run():
+        try:
+            a = await owner._get_initialized_rag()
+            with pytest.raises(module.LightRagConfigurationError, match="text_chunks"):
+                await adapter._get_initialized_rag()
+            assert "llm_response_cache" not in a.closed_stores
+            assert owner._initialized and not adapter._initialized
+        finally:
+            await adapter.close()
+            await owner.close()
+
+    asyncio.run(run())

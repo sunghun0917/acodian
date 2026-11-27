@@ -53,3 +53,38 @@ def test_provider_stub_handles_index_keyword_and_answer_modes():
         assert await hooks.fake_llm("fixture") == "<|COMPLETE|>"
 
     asyncio.run(check())
+
+
+def test_install_barrier_precedes_locked_team_sync(monkeypatch):
+    from redis import asyncio as redis_module
+    from app.light.v4.service import lightrag_adapter
+    from app.light.v4.service.worklog_team_copy_writer import TeamCopyWriter
+    from app.task import light_worklog_tasks
+
+    hooks = load_hooks()
+    events = []
+
+    async def original_sync(self, team_id, worklog_id):
+        events.append(("sync", team_id, worklog_id))
+
+    async def record_barrier(redis, phase, worklog_id):
+        events.append((phase, worklog_id))
+
+    monkeypatch.setenv("WORKLOG_NORMAL_E2E_ENABLED", "1")
+    monkeypatch.setenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+    monkeypatch.setattr(redis_module, "from_url", lambda url: object())
+    monkeypatch.setattr(hooks, "barrier", record_barrier)
+    monkeypatch.setattr(TeamCopyWriter, "_sync_team", original_sync)
+    # install이 교체하는 속성을 monkeypatch가 테스트 종료 시 되돌린다.
+    for obj, name in [
+        (light_worklog_tasks, "_persist_and_report"),
+        (light_worklog_tasks.WorklogIndexClient, "report_start"),
+        (lightrag_adapter, "_build_gemini_embedding_func"),
+        (lightrag_adapter, "_build_gemini_llm_model_func"),
+        (lightrag_adapter.LightRagWorklogIndexAdapter, "_get_initialized_rag"),
+    ]:
+        monkeypatch.setattr(obj, name, getattr(obj, name))
+    hooks.install()
+    writer = object.__new__(TeamCopyWriter)
+    asyncio.run(writer._sync_team(3, 7))
+    assert events == [("prepared", 7), ("sync", 3, 7)]

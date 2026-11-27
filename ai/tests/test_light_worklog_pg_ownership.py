@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.light.v4.service.lightrag_adapter import (
-    LightRagWorklogIndexAdapter, LightRagDeleteFailedError, LightRagInsertFailedError,
+    LightRagWorklogIndexAdapter, LightRagDeleteFailedError,
     LightRagQueryFailedError,
 )
 from tests.test_lightrag_v4_adapter import make_settings
@@ -36,23 +36,15 @@ def adapter_with_status(records):
     return adapter, status
 
 
-def test_indexed_team_metadata_preserves_native_fields():
-    record = {"status": "processed", "chunks_list": ["body", "custom"], "chunks_count": 2,
-              "metadata": {"processing_start_time": 123}, "created_at": "original"}
+def test_legacy_indexed_team_metadata_is_read_without_mutation():
+    record = {"status": "processed", "chunks_list": ["body", "custom"],
+              "metadata": {"processing_start_time": 123, "indexed_team_id": 10}}
     adapter, status = adapter_with_status({"worklog-1": record})
     async def run():
-        await adapter.save_indexed_team_ids({1: 10})
         assert await adapter.get_document_team_id("worklog-1") == 10
         assert await adapter.get_document_team_id("worklog-999") is None
     asyncio.run(run())
-    assert status.records["worklog-1"] == {**record, "metadata": {"processing_start_time": 123, "indexed_team_id": 10}}
-
-
-@pytest.mark.parametrize("teams", [{True: 10}, {1: True}, {0: 10}, {1: -1}])
-def test_indexed_team_metadata_rejects_invalid_ids(teams):
-    adapter, _ = adapter_with_status({})
-    with pytest.raises(LightRagInsertFailedError):
-        asyncio.run(adapter.save_indexed_team_ids(teams))
+    assert status.records["worklog-1"] == record
 
 
 @pytest.mark.parametrize("metadata", [{}, {"indexed_team_id": True}, {"indexed_team_id": "10"}, None])
@@ -60,12 +52,6 @@ def test_existing_status_without_valid_ownership_fails_closed(metadata):
     adapter, _ = adapter_with_status({"worklog-1": {"status": "processed", "metadata": metadata}})
     with pytest.raises(LightRagDeleteFailedError):
         asyncio.run(adapter.get_document_team_id("worklog-1"))
-
-
-def test_ownership_requires_processed_document():
-    adapter, _ = adapter_with_status({"worklog-1": {"status": "processing"}})
-    with pytest.raises(LightRagInsertFailedError):
-        asyncio.run(adapter.save_indexed_team_ids({1: 10}))
 
 
 def test_processed_lookup_excludes_missing_and_incomplete():

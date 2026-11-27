@@ -97,11 +97,13 @@ class LightRagWorklogSearchServiceTest {
     }
 
     @Test
-    @DisplayName("전사 권한은 팀 목록 조회 없이 null scope로 LightRAG를 호출한다")
-    void 전사_권한은_팀_목록_조회_없이_null_scope로_LightRAG를_호출한다() {
+    @DisplayName("전사 권한은 조회된 전체 팀 목록을 LightRAG에 전달한다")
+    void 전사_권한은_전체_팀_목록을_전달한다() {
         LightRagWorklogSearchService service = service(true);
         CustomUserPrincipal principal = principal();
-        given(worklogVisibilityPolicy.resolve(principal)).willReturn(new WorklogVisibilityScope.All());
+        WorklogVisibilityScope scope = new WorklogVisibilityScope.All();
+        given(worklogVisibilityPolicy.resolve(principal)).willReturn(scope);
+        given(worklogRepository.findVisibleTeamIds(scope)).willReturn(List.of(1L, 2L, 3L));
         given(lightRagWorklogSearchClient.queryWorklogs(any())).willReturn(lightRagResponse());
 
         service.searchWorklogs(principal, request());
@@ -109,8 +111,23 @@ class LightRagWorklogSearchServiceTest {
         ArgumentCaptor<InternalLightRagWorklogQueryApiDto.Request> captor =
                 ArgumentCaptor.forClass(InternalLightRagWorklogQueryApiDto.Request.class);
         verify(lightRagWorklogSearchClient).queryWorklogs(captor.capture());
-        assertThat(captor.getValue().allowedTeamIds()).isNull();
-        verifyNoInteractions(worklogRepository);
+        assertThat(captor.getValue().allowedTeamIds()).containsExactly(1L, 2L, 3L);
+    }
+
+    @Test
+    @DisplayName("전사 권한에서 팀이 없으면 LightRAG 호출 없이 빈 응답을 반환한다")
+    void 전사_권한에서_팀이_없으면_LightRAG를_호출하지_않는다() {
+        LightRagWorklogSearchService service = service(true);
+        CustomUserPrincipal principal = principal();
+        WorklogVisibilityScope scope = new WorklogVisibilityScope.All();
+        given(worklogVisibilityPolicy.resolve(principal)).willReturn(scope);
+        given(worklogRepository.findVisibleTeamIds(scope)).willReturn(List.of());
+
+        SearchSemanticWorklogsApiDto.Response response = service.searchWorklogs(principal, request());
+
+        assertThat(response.answer()).isEmpty();
+        assertThat(response.references()).isEmpty();
+        verifyNoInteractions(lightRagWorklogSearchClient);
     }
 
     private LightRagWorklogSearchService service(boolean enabled) {

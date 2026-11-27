@@ -17,7 +17,7 @@ class WorklogLightQueryRequest(BaseModel):
     rerank_model: str | None = Field(
         default=None, alias="rerankModel", min_length=1, max_length=200
     )
-    allowed_team_ids: list[PositiveInt] | None = Field(alias="allowedTeamIds")
+    allowed_team_ids: list[PositiveInt] = Field(alias="allowedTeamIds", min_length=1)
 
 
 class WorklogLightReferenceItem(BaseModel):

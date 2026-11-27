@@ -29,6 +29,7 @@ from app.light.v4.store.worklog_extraction_cache import ValidatedWorklogExtracti
 from app.light.v4.service.worklog_custom_kg_builder import LightRagWorklogCustomKgDocument
 from app.light.v4.service.worklog_document_builder import LightRagWorklogDocument
 from app.light.v4.store.worklog_custom_kg_tracking import insert_tracked_worklog_custom_kg
+from app.light.v4.store.worklog_team_copy_store import DocumentFootprint
 from app.light.v4.service.worklog_mutation_lock import worklog_mutation_locks, workspace_mutation_key
 from app.light.v4.store.worklog_team_vector_store import (
     finalize_worklog_team_vector_storage,
@@ -99,9 +100,6 @@ class WorklogLightIndexAdapter(Protocol):
     async def delete_document(self, document_id: str) -> None:
         """단일 업무일지 문서를 LightRAG에서 삭제한다."""
 
-    async def save_indexed_team_ids(self, teams_by_worklog_id: dict[int, int]) -> None:
-        """Record team ownership before scoped writes."""
-
     async def get_document_team_id(self, document_id: str, *, allow_missing: bool = False) -> int | None:
         """Read the last indexed team for deletion."""
 
@@ -152,11 +150,13 @@ class LightRagWorklogIndexAdapter:
         settings_obj: Settings = settings,
         dependencies: LightRagDependencies | None = None,
         expected_workspace: str | None = None,
+        shared_llm_cache_from: LightRagWorklogIndexAdapter | None = None,
     ) -> None:
         """adapter 설정과 optional fake dependency를 구성한다."""
         self._settings = settings_obj
         self._dependencies = dependencies
         self._expected_workspace = expected_workspace
+        self._shared_llm_cache_from = shared_llm_cache_from
         self._rag: Any | None = None
         self._initialized = False
         # _initialize_lock : 동시요청와도 싱글톤 반환되도록
@@ -277,6 +277,86 @@ class LightRagWorklogIndexAdapter:
         except Exception as exc:
             raise LightRagDeleteFailedError(f"LightRAG document delete failed: {exc}") from exc
 
+    async def list_document_ids(self) -> list[str]:
+        """검증된 workspace의 doc_status 문서 ID를 모든 페이지에서 모은다."""
+        rag = await self._get_initialized_rag()
+        self._verify_storage_workspaces(rag)
+        document_ids: list[str] = []
+        page, seen = 1, 0
+        while True:
+            documents, total = await rag.doc_status.get_docs_paginated(
+                page=page, page_size=200, sort_field="id", sort_direction="asc",
+            )
+            document_ids.extend(document_id for document_id, _ in documents)
+            seen += len(documents)
+            if not documents or seen >= total:
+                break
+            page += 1
+        return document_ids
+
+    async def document_footprint(self, document_id: str) -> DocumentFootprint:
+        """삭제 전에 native 문서 청크와 엔티티 및 관계 목록을 보관한다."""
+        rag = await self._get_initialized_rag()
+        status, entities, relations = await asyncio.gather(
+            rag.doc_status.get_by_id(document_id),
+            rag.full_entities.get_by_id(document_id),
+            rag.full_relations.get_by_id(document_id),
+        )
+        return DocumentFootprint(
+            frozenset((status or {}).get("chunks_list", [])),
+            frozenset((entities or {}).get("entity_names", [])),
+            frozenset(tuple(pair) for pair in (relations or {}).get("relation_pairs", [])),
+        )
+
+    async def find_stale_references(self, footprint: DocumentFootprint) -> list[str]:
+        """다른 문서가 쓰는 청크를 제외하고 그래프의 삭제 잔여 참조를 찾는다."""
+        from lightrag.constants import GRAPH_FIELD_SEP
+
+        if not footprint.chunk_ids:
+            return []
+        rag = await self._get_initialized_rag()
+        shared_chunks: set[str] = set()
+        page, seen = 1, 0
+        while True:
+            documents, total = await rag.doc_status.get_docs_paginated(page=page, page_size=200)
+            for _, status in documents:
+                chunks = status.get("chunks_list", []) if isinstance(status, dict) else status.chunks_list
+                shared_chunks.update(chunks or [])
+            seen += len(documents)
+            if not documents or seen >= total:
+                break
+            page += 1
+        deleted_chunks = footprint.chunk_ids - shared_chunks
+        if not deleted_chunks:
+            return []
+        graph = rag.chunk_entity_relation_graph
+        stale = []
+        for name in sorted(footprint.entity_names):
+            node = await graph.get_node(name)
+            if node and deleted_chunks.intersection(node.get("source_id", "").split(GRAPH_FIELD_SEP)):
+                stale.append(name)
+        for source, target in sorted(footprint.relation_keys):
+            edge = await graph.get_edge(source, target)
+            if edge and deleted_chunks.intersection(edge.get("source_id", "").split(GRAPH_FIELD_SEP)):
+                stale.append(f"{source} -> {target}")
+        return stale
+
+    async def drop_all(self) -> None:
+        """공유 LLM 캐시를 보존하며 현재 사본의 저장소만 비우고 결과를 확인한다."""
+        rag = await self._get_initialized_rag()
+        try:
+            async with asyncio.timeout(self._settings.lightrag_insert_timeout_seconds), worklog_mutation_locks([workspace_mutation_key(rag)]):
+                for name in _SCOPE_STORAGE_NAMES:
+                    if name == "llm_response_cache":
+                        continue
+                    result = await getattr(rag, name).drop()
+                    if not isinstance(result, dict) or result.get("status") != "success":
+                        raise LightRagDeleteFailedError(f"LightRAG {name} drop failed")
+                for name in ("_worklog_pending_chunks", "_worklog_pending_status"):
+                    getattr(rag.doc_status, name, {}).clear()
+        except Exception as exc:
+            raise LightRagDeleteFailedError("LightRAG workspace drop failed") from exc
+
     async def _delete_statusless_document(self, rag: Any, document_id: str) -> None:
         """native not_found가 놓치는 full_docs-only 쓰기를 정리하고 추적 유실은 차단한다."""
         for name in ("full_entities", "full_relations"):
@@ -287,70 +367,6 @@ class LightRagWorklogIndexAdapter:
             await rag.full_docs.index_done_callback()
         if await rag.full_docs.get_by_id(document_id) is not None:
             raise LightRagDeleteFailedError("Statusless full document cleanup is incomplete")
-
-    async def set_document_indexing_status(self, document_id: str, state: str) -> None:
-        """native 상태를 보존하며 전역 완료 게이트를 영속화하고 읽어 확인한다."""
-        async def save() -> None:
-            if not document_id or state not in {"STAGING", "COMPLETED"}:
-                raise ValueError("Invalid document indexing state")
-            rag = await self._get_initialized_rag()
-            async with worklog_mutation_locks([workspace_mutation_key(rag)]):
-                record = await rag.doc_status.get_by_id(document_id)
-                if record is None and state == "STAGING":
-                    return
-                if not isinstance(record, dict):
-                    raise ValueError("Index publication requires an existing document")
-                metadata = record.get("metadata", {})
-                if not isinstance(metadata, dict):
-                    raise ValueError("Invalid document metadata")
-                team_id = metadata.get("indexed_team_id")
-                if state == "COMPLETED" and (
-                    record.get("status") != "processed" or type(team_id) is not int or team_id <= 0
-                ):
-                    raise ValueError("Index publication requires processed document ownership")
-                await rag.doc_status.upsert({document_id: {
-                    **record, "metadata": {**metadata, "indexing_status": state},
-                }})
-                await rag.doc_status.index_done_callback()
-                saved = await rag.doc_status.get_by_id(document_id)
-                if not isinstance(saved, dict) or saved.get("metadata", {}).get("indexing_status") != state:
-                    raise ValueError("Index publication could not be verified")
-
-        try:
-            await asyncio.wait_for(save(), timeout=self._settings.lightrag_insert_timeout_seconds)
-        except LightRagConfigurationError:
-            raise
-        except TimeoutError as exc:
-            raise LightRagInsertTimeoutError("LightRAG indexing state save timed out") from exc
-        except Exception as exc:
-            raise LightRagInsertFailedError("LightRAG indexing state save failed") from exc
-
-    async def save_indexed_team_ids(self, teams_by_worklog_id: dict[int, int]) -> None:
-        """Preserve native status fields and record the indexed team before team writes."""
-        if not teams_by_worklog_id:
-            return
-        try:
-            if any(type(worklog) is not int or worklog <= 0 or type(team) is not int or team <= 0
-                   for worklog, team in teams_by_worklog_id.items()):
-                raise ValueError("Invalid indexed ownership")
-            rag = await self._get_initialized_rag()
-            async with worklog_mutation_locks([workspace_mutation_key(rag)]):
-                records = {}
-                for worklog, team in teams_by_worklog_id.items():
-                    doc_id = f"worklog-{worklog}"
-                    record = await rag.doc_status.get_by_id(doc_id)
-                    if not isinstance(record, dict) or record.get("status") != "processed":
-                        raise ValueError("Indexed ownership requires a processed document")
-                    metadata = record.get("metadata", {})
-                    if not isinstance(metadata, dict):
-                        raise ValueError("Invalid document metadata")
-                    records[doc_id] = {**record, "metadata": {**metadata, "indexed_team_id": team}}
-                await rag.doc_status.upsert(records)
-                await rag.doc_status.index_done_callback()
-        except LightRagConfigurationError:
-            raise
-        except Exception as exc:
-            raise LightRagInsertFailedError("LightRAG indexed ownership save failed") from exc
 
     async def get_document_team_id(self, document_id: str, *, allow_missing: bool = False) -> int | None:
         """Recover indexed ownership independently of the current source database."""
@@ -541,7 +557,15 @@ class LightRagWorklogIndexAdapter:
         """초기화된 LightRAG storage를 finalize하고 singleton 재사용 상태를 초기화한다."""
         rag = self._rag
         if rag is not None and self._initialized:
-            await rag.finalize_storages()
+            cache = rag.llm_response_cache if self._shared_llm_cache_from is not None else None
+            if cache is not None:
+                # 공유 캐시 연결의 종료는 사본 a만 소유한다.
+                rag.llm_response_cache = None
+            try:
+                await rag.finalize_storages()
+            finally:
+                if cache is not None:
+                    rag.llm_response_cache = cache
         self._rag = None
         self._initialized = False
 
@@ -554,14 +578,24 @@ class LightRagWorklogIndexAdapter:
             if self._rag is not None and self._initialized:
                 return self._rag
 
+            shared_rag = None
+            if self._shared_llm_cache_from is not None:
+                shared_rag = await self._shared_llm_cache_from._get_initialized_rag()
             rag = self._build_lightrag()
+            shared_cache_attached = False
             try:
                 await rag.initialize_storages()
+                if shared_rag is not None:
+                    # native 초기화가 같은 연결을 중복 소유하지 않게 사본 전용 캐시를 먼저 닫는다.
+                    await rag.llm_response_cache.finalize()
+                    rag.llm_response_cache = shared_rag.llm_response_cache
+                    shared_cache_attached = True
                 self._verify_storage_workspaces(rag)
             except BaseException:
                 # LightRAG는 전체 초기화 전에는 finalize_storages를 생략한다.
                 results = await asyncio.gather(*(
                     storage.finalize() for name in _SCOPE_STORAGE_NAMES
+                    if not (name == "llm_response_cache" and shared_cache_attached)
                     if (storage := getattr(rag, name, None)) is not None
                     and callable(getattr(storage, "finalize", None))
                 ), return_exceptions=True)
@@ -637,7 +671,10 @@ class LightRagWorklogIndexAdapter:
             raise LightRagConfigurationError("LightRAG workspace mismatch")
         for name in _SCOPE_STORAGE_NAMES:
             storage = getattr(rag, name, None)
-            if getattr(storage, "workspace", None) != expected:
+            allowed = {expected}
+            if name == "llm_response_cache" and self._shared_llm_cache_from is not None:
+                allowed.add(self._shared_llm_cache_from._settings.lightrag_workspace.strip())
+            if getattr(storage, "workspace", None) not in allowed:
                 raise LightRagConfigurationError(f"LightRAG {name} workspace mismatch")
             if name.endswith("_vdb") and getattr(storage, "effective_workspace", None) != expected:
                 raise LightRagConfigurationError(f"LightRAG {name} effective workspace mismatch")

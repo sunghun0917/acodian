@@ -18,10 +18,10 @@ from app.light.v4.service.lightrag_adapter import (
     LightRagQueryFailedError,
     LightRagQueryOptions,
     LightRagQueryTimeoutError,
-    get_lightrag_worklog_index_adapter,
 )
 from app.light.v4.prompt.worklog_query_prompt import build_worklog_query_system_prompt
 from app.light.v4.service.worklog_team_scope import get_lightrag_team_scope_adapter
+from app.light.v4.store.worklog_team_copy_store import TeamCopy
 
 
 _WORKLOG_PATH = re.compile(r"worklog://([1-9][0-9]*)")
@@ -37,14 +37,12 @@ class LightWorklogQueryService:
         self,
         *,
         settings_obj: Settings = settings,
-        adapter_factory: Callable[..., Any] = get_lightrag_worklog_index_adapter,
         team_adapter_factory: Callable[..., Any] = get_lightrag_team_scope_adapter,
         cache: Any = None,
         embedder: Any = None,
     ) -> None:
         """settings와 검색 adapter를 구성하며 응답 캐시는 사용하지 않는다."""
         self._settings = settings_obj
-        self._adapter_factory = adapter_factory
         self._team_adapter_factory = team_adapter_factory
         # shortcut: 응답 캐시는 DB 최신성 검증을 지원할 때까지 모든 검색에서 비활성화한다.
 
@@ -53,15 +51,16 @@ class LightWorklogQueryService:
         request: WorklogLightQueryRequest,
     ) -> WorklogLightQueryResponse:
         """검색 범위와 최신 DB 문맥 검증을 마친 뒤에만 답변을 생성한다."""
-        if request.allowed_team_ids == []:
-            return WorklogLightQueryResponse(answer="", references=[], internalOnly=True)
-
         options = self._build_options(request)
-        scoped = await self._indexed_context(request, options)
+        try:
+            async with asyncio.timeout(self._settings.lightrag_query_timeout_seconds):
+                scoped = await self._indexed_context(request, options)
+        except TimeoutError as exc:
+            raise LightRagQueryTimeoutError("LightRAG query context timed out") from exc
         if scoped is None:
             return WorklogLightQueryResponse(answer="", references=[], internalOnly=True)
-        prompt, references = scoped
-        answer = await self._adapter_factory().complete_scoped(request.query, system_prompt=prompt)
+        prompt, references, adapter = scoped
+        answer = await adapter.complete_scoped(request.query, system_prompt=prompt)
         if not isinstance(answer, str) or not answer.strip():
             raise LightRagQueryFailedError("LightRAG query returned empty LLM response")
         return WorklogLightQueryResponse(
@@ -91,20 +90,23 @@ class LightWorklogQueryService:
 
     async def _indexed_context(
         self, request: WorklogLightQueryRequest, options: LightRagQueryOptions
-    ) -> tuple[str, list[WorklogLightReferenceItem]] | None:
-        """전사 또는 허용 팀 후보를 현재 업무 원본과 검증해 LLM 문맥을 구성한다."""
+    ) -> tuple[str, list[WorklogLightReferenceItem], Any] | None:
+        """토큰을 유지한 사본에서 검색과 권한 확인 및 스냅샷 문맥 생성을 마친다."""
         pool = self._team_adapter_factory()
-        if request.allowed_team_ids is None:
-            retrieved = await self._adapter_factory().query_data(options)
-        else:
-            retrieved = await pool.query_data(options, tuple(request.allowed_team_ids))
-        return await self._indexed_context_from_data(request, options, retrieved, pool)
+        async with pool.read_copies(tuple(request.allowed_team_ids)) as copies:
+            retrieved = await pool.query_data(options, copies)
+            context = await self._indexed_context_from_data(request, options, retrieved, pool, copies)
+            if context is None:
+                return None
+            team = min(copies)
+            prompt, references = context
+            return prompt, references, pool.adapter_for(team, copies[team])
 
     async def _indexed_context_from_data(
         self, request: WorklogLightQueryRequest, options: LightRagQueryOptions,
-        retrieved: dict[str, Any], pool: Any,
+        retrieved: dict[str, Any], pool: Any, copies: dict[int, TeamCopy],
     ) -> tuple[str, list[WorklogLightReferenceItem]] | None:
-        """현재 DB 본문·메타데이터·접근 가능한 직접 선행 관계로 문맥을 구성한다."""
+        """권한이 확인된 사본 스냅샷 본문과 직접 선행 관계로 문맥을 구성한다."""
         if not isinstance(retrieved, dict):
             raise LightRagQueryFailedError("LightRAG query returned invalid retrieval data")
         if retrieved.get("status") == "failure":
@@ -118,12 +120,10 @@ class LightWorklogQueryService:
         candidate_ids = _candidate_worklog_ids(data)
         if not candidate_ids:
             return None
-        scope = None if request.allowed_team_ids is None else tuple(request.allowed_team_ids)
-        rows = await pool.read_source_rows(candidate_ids, scope)
-        allowed = set(request.allowed_team_ids or [])
+        rows = await pool.read_source_rows(candidate_ids, copies)
         selected = [
             rows[worklog_id] for worklog_id in candidate_ids
-            if worklog_id in rows and (scope is None or rows[worklog_id].team_id in allowed)
+            if worklog_id in rows and rows[worklog_id].team_id in copies
         ]
         if not selected:
             return None
@@ -138,12 +138,12 @@ class LightWorklogQueryService:
         if len(predecessor_ids) > _MAX_SCOPED_PREDECESSOR_IDS:
             raise LightRagQueryFailedError("Scoped worklog relation limit exceeded")
         if predecessor_ids:
-            predecessor_rows = await pool.read_source_rows(predecessor_ids, scope)
+            predecessor_rows = await pool.read_source_rows(predecessor_ids, copies)
             authorized_rows.update(
                 (worklog_id, predecessor_rows[worklog_id])
                 for worklog_id in predecessor_ids
                 if worklog_id in predecessor_rows
-                and (scope is None or predecessor_rows[worklog_id].team_id in allowed)
+                and predecessor_rows[worklog_id].team_id in copies
             )
 
         body_context = "\n\n".join(
@@ -200,9 +200,6 @@ class LightWorklogQueryService:
         request: WorklogLightQueryRequest,
     ) -> AsyncIterator[dict[str, Any]]:
         """LightRAG streaming query를 실행하고 SSE 이벤트를 yield하는 generator를 반환한다."""
-        if request.allowed_team_ids == []:
-            yield {"event": "done", "data": json.dumps({"references": [], "done": True})}
-            return
         options = self._build_options(request, stream=True)
         start_time = asyncio.get_running_loop().time()
         timeout_seconds = float(self._settings.lightrag_query_timeout_seconds)
@@ -212,8 +209,8 @@ class LightWorklogQueryService:
             async with asyncio.timeout_at(deadline):
                 authorized = await self._indexed_context(request, options)
                 if authorized is not None:
-                    prompt, reference_items = authorized
-                    response_iterator = await self._adapter_factory().complete_scoped(
+                    prompt, reference_items, adapter = authorized
+                    response_iterator = await adapter.complete_scoped(
                         request.query, system_prompt=prompt, stream=True,
                     )
         except TimeoutError as exc:

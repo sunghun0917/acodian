@@ -27,9 +27,9 @@ class WorklogQueryCache:
         self._index_ready = False
 
     @staticmethod
-    def scope_key(allowed_team_ids: list[int] | None) -> str:
-        """전체 권한과 정렬된 팀 집합을 서로 다른 해시로 표현한다."""
-        teams = None if allowed_team_ids is None else sorted(set(allowed_team_ids))
+    def scope_key(allowed_team_ids: list[int]) -> str:
+        """정렬된 허용 팀 집합을 해시로 표현한다."""
+        teams = sorted(set(allowed_team_ids))
         raw = json.dumps(teams, separators=(",", ":"))
         return hashlib.sha256(raw.encode()).hexdigest()
 

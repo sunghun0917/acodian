@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app.config.settings import Settings
@@ -61,8 +63,8 @@ def install_fake_service(monkeypatch, service: FakeQueryService) -> None:
 def post_query(payload: dict[str, Any] | None = None):
     return client.post(
         "/ai/light/worklogs-v4/query",
-        json=({"query": "업무일지 요약", "allowedTeamIds": None}
-              if payload is None else {"allowedTeamIds": None, **payload}),
+        json=({"query": "업무일지 요약", "allowedTeamIds": [106]}
+              if payload is None else {"allowedTeamIds": [106], **payload}),
         headers={"X-AI-Internal-Token": "test-token"},
     )
 
@@ -128,15 +130,18 @@ def test_light_worklogs_v4_query_accepts_allowed_team_ids(monkeypatch) -> None:
     assert service.calls[0].allowed_team_ids == [106]
 
 
-def test_light_worklogs_v4_query_accepts_null_allowed_team_ids(monkeypatch) -> None:
+@pytest.mark.parametrize("endpoint", ["query", "query/stream"])
+@pytest.mark.parametrize("teams", [None, []])
+def test_light_worklogs_v4_query_rejects_null_and_empty_allowed_team_ids(monkeypatch, endpoint, teams):
     service = FakeQueryService()
     install_fake_service(monkeypatch, service)
-
-    response = post_query(payload={"query": "ok", "allowedTeamIds": None})
-
-    assert response.status_code == 200
-    assert len(service.calls) == 1
-    assert service.calls[0].allowed_team_ids is None
+    response = client.post(
+        f"/ai/light/worklogs-v4/{endpoint}",
+        json={"query": "ok", "allowedTeamIds": teams},
+        headers={"X-AI-Internal-Token": "test-token"},
+    )
+    assert response.status_code == 422
+    assert service.calls == []
 
 
 def test_light_worklogs_v4_query_rejects_option_override(monkeypatch) -> None:
@@ -224,7 +229,7 @@ def test_light_worklogs_v4_query_stream_success(monkeypatch) -> None:
 
     response = client.post(
         "/ai/light/worklogs-v4/query/stream",
-        json={"query": "요약해줘", "allowedTeamIds": None},
+        json={"query": "요약해줘", "allowedTeamIds": [106]},
         headers={"X-AI-Internal-Token": "test-token"},
     )
 
@@ -239,7 +244,7 @@ def test_light_worklogs_v4_query_stream_timeout(monkeypatch) -> None:
 
     response = client.post(
         "/ai/light/worklogs-v4/query/stream",
-        json={"query": "요약해줘", "allowedTeamIds": None},
+        json={"query": "요약해줘", "allowedTeamIds": [106]},
         headers={"X-AI-Internal-Token": "test-token"},
     )
 
